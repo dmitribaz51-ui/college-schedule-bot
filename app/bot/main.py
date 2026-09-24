@@ -44,3 +44,12 @@ async def main() -> None:
         scheduler.shutdown(wait=False)
         await bot.session.close()
         logger.info("Бот остановлен")
+
+
+if __name__ == "__main__":  # запуск напрямую: python -m app.bot.main
+    import asyncio
+
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен вручную")
