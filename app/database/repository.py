@@ -181,12 +181,13 @@ def replace_group_lessons(
 ) -> int:
     """Заменяет расписание группы на конкретную дату (без дублей)."""
     with get_session() as s:
+        # Удаляем ВСЕ старые записи для этой группы/даты/типа независимо от faculty
+        # (иначе при смене faculty останутся дубли со старым значением)
         s.execute(
             delete(Lesson).where(
                 Lesson.schedule_date == schedule_date,
                 Lesson.group_name == group_name,
                 Lesson.source_type == source_type,
-                Lesson.faculty == faculty,
             )
         )
         saved = 0
