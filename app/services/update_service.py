@@ -102,13 +102,16 @@ async def _process_link(link: ScheduleLink, report: UpdateReport, bot=None, facu
         day = schedule.schedule_date or link.schedule_date
         if day is None or not schedule.lessons:
             continue
+        # Автоопределение факультета по префиксу группы (приоритет над URL файла)
+        from app.utils import detect_faculty
+        group_faculty = detect_faculty(schedule.group)
         saved_lessons += repo.replace_group_lessons(
             schedule_date=day,
             group_name=schedule.group,
             source_type=link.file_type,
             course=schedule.course,
             lessons=[l.to_dict() for l in schedule.lessons],
-            source_file_id=file_id, faculty=faculty,
+            source_file_id=file_id, faculty=group_faculty,
         )
         saved_groups.append(schedule.group)
 
