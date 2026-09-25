@@ -488,12 +488,13 @@ def _parse_xls_file(path: Path, default_date: date | None) -> list[GroupSchedule
         # xlrd нумерует строки с нуля. В файлах Чернышевского два блока:
         # I/II курс — заголовок курса в строке 1, группы в строке 2;
         # III/IV курс — заголовок в строке 10, группы в строке 11.
-        # Второй блок ищем по слову «курс», а не по жёсткому номеру: между
-        # блоками бывает пустая строка, и фиксированный адрес промахивается.
+        # Второй блок ищем по номеру курса (I-IV курс), а не по простому вхождению
+        # подстроки «курс», иначе слова вроде «экскурсионных» в тексте пары (V пара)
+        # ошибочно принимаются за начало блока старших курсов и обрезают 5-6 пары!
         second = next(
             (
                 r for r in range(8, sheet.nrows)
-                if any("курс" in _clean(str(sheet.cell_value(r, c))).lower() for c in range(sheet.ncols))
+                if any(ROMAN_COURSE_RE.search(_clean(str(sheet.cell_value(r, c)))) for c in range(sheet.ncols))
             ),
             None,
         )
