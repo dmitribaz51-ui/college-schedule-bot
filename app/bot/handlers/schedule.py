@@ -25,8 +25,13 @@ class ScheduleStates(StatesGroup):
 
 
 def _user_group(telegram_id: int) -> tuple[str, str, int | None] | None:
+    from app.utils import detect_faculty
     user = repo.get_user(telegram_id)
-    return (user.group_name, user.faculty, user.course) if user and user.group_name else None
+    if not user or not user.group_name:
+        return None
+    # Автоопределение факультета по префиксу группы (приоритет над сохранённым)
+    faculty = detect_faculty(user.group_name)
+    return (user.group_name, faculty, user.course)
 
 
 async def _require_group(message: Message) -> str | None:

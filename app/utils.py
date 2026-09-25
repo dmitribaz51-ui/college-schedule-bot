@@ -109,6 +109,35 @@ def normalize_group(raw: str | None) -> str | None:
     return text
 
 
+# Префиксы групп факультета Чернышевского (дизайн и сервис)
+CHERNYSHEVSKOGO_PREFIXES = frozenset([
+    "АК",  # Актёрское искусство
+    "ВР",  # Визуальный рекламный дизайн
+    "ГД",  # Графический дизайн
+    "Д",   # Дизайн (общий)
+    "КМ",  # Конструирование и моделирование
+    "Р",   # Реклама
+    "СГ",  # Социально-гуманитарный
+    "Т",   # Туризм
+    "ТПИ", # Техника и технологии
+    "ТФ",  # Технология и предпринимательство
+    "ТЭУ", # Туризм и экскурсионное дело
+])
+
+
+def detect_faculty(group_name: str) -> str:
+    """Определяет факультет по префиксу группы.
+    
+    Возвращает 'chernyshevskogo' для групп факультета дизайна и сервиса,
+    'permskaya' для остальных.
+    """
+    if not group_name:
+        return "permskaya"
+    
+    prefix = group_name.split("-")[0] if "-" in group_name else group_name
+    return "chernyshevskogo" if prefix in CHERNYSHEVSKOGO_PREFIXES else "permskaya"
+
+
 _DATE_PATTERNS = (
     "%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d",
 )
