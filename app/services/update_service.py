@@ -48,7 +48,13 @@ class UpdateReport:
         return "\n".join(lines)
 
 
-async def _process_link(link: ScheduleLink, report: UpdateReport, bot=None, faculty: str = "permskaya") -> None:
+async def _process_link(
+    link: ScheduleLink,
+    report: UpdateReport,
+    bot=None,
+    faculty: str = "permskaya",
+    force_reprocess: bool = False,
+) -> None:
     config = get_config()
 
     file_name = build_file_name(link.schedule_date, link.file_type, link.url)
@@ -67,7 +73,7 @@ async def _process_link(link: ScheduleLink, report: UpdateReport, bot=None, facu
         return
 
     # тот же файл под другой ссылкой — не обрабатываем повторно
-    if repo.file_hash_exists(downloaded.sha256, exclude_url=link.url):
+    if not force_reprocess and repo.file_hash_exists(downloaded.sha256, exclude_url=link.url):
         repo.upsert_file(
             title=link.title, url=link.url, file_type=link.file_type, faculty=faculty,
             schedule_date=link.schedule_date, file_hash=downloaded.sha256,
@@ -138,7 +144,7 @@ async def _process_link(link: ScheduleLink, report: UpdateReport, bot=None, facu
         )
 
 
-async def check_for_updates(bot=None) -> UpdateReport:
+async def check_for_updates(bot=None, force_reprocess: bool = False) -> UpdateReport:
     """Полный цикл проверки. Никогда не выбрасывает исключение наружу."""
     config = get_config()
     report = UpdateReport()
@@ -155,11 +161,17 @@ async def check_for_updates(bot=None) -> UpdateReport:
 
     known_urls = repo.get_processed_urls()
     for faculty, link in links_with_faculty:
-        if link.url in known_urls:
+        if link.url in known_urls and not force_reprocess:
             report.skipped += 1
             continue
         try:
-            await _process_link(link, report, bot=bot, faculty=faculty)
+            await _process_link(
+                link,
+                report,
+                bot=bot,
+                faculty=faculty,
+                force_reprocess=force_reprocess,
+            )
         except Exception as exc:
             logger.exception("Ошибка обработки ссылки %s", link.url)
             report.errors.append(f"{link.title}: {exc}")

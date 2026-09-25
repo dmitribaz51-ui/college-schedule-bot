@@ -41,7 +41,7 @@ async def admin_check(callback: CallbackQuery, bot: Bot) -> None:
         await callback.answer("Нет доступа", show_alert=True)
         return
     await callback.answer("Проверяю сайт…")
-    report = await check_for_updates(bot=bot)
+    report = await check_for_updates(bot=bot, force_reprocess=True)
     await callback.message.answer(f"🔄 <b>Результат проверки</b>\n\n{report.summary()}")
 
 
