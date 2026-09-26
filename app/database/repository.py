@@ -178,9 +178,35 @@ def replace_group_lessons(
     lessons: list[dict],
     source_file_id: int | None = None,
     faculty: str = "permskaya",
-) -> int:
+) -> tuple[int, bool]:
     """Заменяет расписание группы на конкретную дату (без дублей)."""
     with get_session() as s:
+        old_lessons = list(
+            s.scalars(
+                select(Lesson)
+                .where(
+                    Lesson.schedule_date == schedule_date,
+                    Lesson.group_name == group_name,
+                    Lesson.source_type == source_type,
+                )
+                .order_by(Lesson.lesson_number)
+            )
+        )
+        new_signature = [
+            (
+                item["number"], item.get("subject"), item.get("teacher"),
+                item.get("room"), item.get("notes"),
+            )
+            for item in lessons
+        ]
+        old_signature = [
+            (
+                item.lesson_number, item.subject, item.teacher,
+                item.room, item.notes,
+            )
+            for item in old_lessons
+        ]
+        changed = old_signature != new_signature
         # Удаляем ВСЕ старые записи для этой группы/даты/типа независимо от faculty
         # (иначе при смене faculty останутся дубли со старым значением)
         s.execute(
@@ -208,7 +234,7 @@ def replace_group_lessons(
                 )
             )
             saved += 1
-        return saved
+        return saved, changed
 
 
 def get_lessons(schedule_date: date, group_name: str, faculty: str = "permskaya") -> list[Lesson]:
@@ -247,6 +273,14 @@ def get_groups(course: int | None = None, faculty: str = "permskaya") -> list[st
         return list(
             s.scalars(select(Lesson.group_name).where(Lesson.faculty == faculty).distinct().order_by(Lesson.group_name))
         )
+
+
+def has_schedule_for_date(schedule_date: date) -> bool:
+    with get_session() as s:
+        count = s.scalar(
+            select(func.count(Lesson.id)).where(Lesson.schedule_date == schedule_date)
+        )
+        return bool(count and count > 0)
 
 
 def count_lessons() -> int:

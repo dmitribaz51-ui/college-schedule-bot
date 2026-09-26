@@ -29,8 +29,13 @@ async def _safe_send(bot: Bot, chat_id: int, text: str) -> bool:
     return False
 
 
-async def notify_about_changes(
-    bot: Bot, *, schedule_date: date | None, groups: list[str], title: str
+async def notify_about_schedule_update(
+    bot: Bot,
+    *,
+    schedule_date: date | None,
+    groups: list[str],
+    title: str,
+    is_new: bool = False,
 ) -> int:
     """Пишет только тем, чья группа затронута и у кого включены уведомления."""
     users = repo.get_users_by_groups(groups, only_enabled=True)
@@ -38,10 +43,15 @@ async def notify_about_changes(
         return 0
 
     day = schedule_date.strftime("%d.%m.%Y") if schedule_date else "уточните дату"
+    header = (
+        "🗓 <b>Появилось новое расписание!</b>"
+        if is_new
+        else "⚠️ <b>Появились изменения в расписании!</b>"
+    )
     sent = 0
     for user in users:
         text = (
-            "⚠️ <b>Появились изменения в расписании!</b>\n"
+            f"{header}\n"
             f"📅 На: {day}\n"
             f"👨‍🎓 Ваша группа: <b>{user.group_name}</b>\n\n"
             f"<i>{title}</i>\n"
@@ -51,8 +61,21 @@ async def notify_about_changes(
             sent += 1
         await asyncio.sleep(0.05)  # мягкий лимит Telegram
 
-    logger.info("Уведомления об изменениях отправлены: %s", sent)
+    event_name = "новом расписании" if is_new else "изменениях"
+    logger.info("Уведомления о %s отправлены: %s", event_name, sent)
     return sent
+
+
+async def notify_about_changes(
+    bot: Bot, *, schedule_date: date | None, groups: list[str], title: str
+) -> int:
+    return await notify_about_schedule_update(
+        bot,
+        schedule_date=schedule_date,
+        groups=groups,
+        title=title,
+        is_new=False,
+    )
 
 
 async def broadcast(bot: Bot, text: str) -> int:

@@ -10,7 +10,7 @@ from app.database import repository as repo
 from app.parser.excel_downloader import DownloadError, build_file_name, download_excel
 from app.parser.excel_parser import parse_excel_file
 from app.parser.website_parser import ScheduleLink, fetch_schedule_links
-from app.services.notification_service import notify_about_changes
+from app.services.notification_service import notify_about_schedule_update
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ class ProcessedFile:
     schedule_date: date | None
     groups: list[str]
     lessons_saved: int
+    changed_groups: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -40,8 +41,9 @@ class UpdateReport:
         for item in self.new_files:
             day = item.schedule_date.strftime("%d.%m.%Y") if item.schedule_date else "?"
             kind = "изменения" if item.file_type == "changes" else "расписание"
+            changed_info = f", изменено групп: {len(item.changed_groups)}" if item.changed_groups else ", без изменений пар"
             lines.append(
-                f"• {kind} на {day}: групп {len(item.groups)}, пар {item.lessons_saved}"
+                f"• {kind} на {day}: групп {len(item.groups)}, пар {item.lessons_saved}{changed_info}"
             )
         for error in self.errors:
             lines.append(f"❌ {error}")
@@ -54,6 +56,7 @@ async def _process_link(
     bot=None,
     faculty: str = "permskaya",
     force_reprocess: bool = False,
+    notify_users: bool = True,
 ) -> None:
     config = get_config()
 
@@ -103,7 +106,12 @@ async def _process_link(
         return
 
     saved_groups: list[str] = []
+    changed_groups: list[str] = []
     saved_lessons = 0
+    had_any_prior_schedule = False
+    if link.schedule_date is not None:
+        had_any_prior_schedule = repo.has_schedule_for_date(link.schedule_date)
+
     for schedule in schedules:
         day = schedule.schedule_date or link.schedule_date
         if day is None or not schedule.lessons:
@@ -111,7 +119,7 @@ async def _process_link(
         # Автоопределение факультета по префиксу группы (приоритет над URL файла)
         from app.utils import detect_faculty
         group_faculty = detect_faculty(schedule.group)
-        saved_lessons += repo.replace_group_lessons(
+        saved_count, changed = repo.replace_group_lessons(
             schedule_date=day,
             group_name=schedule.group,
             source_type=link.file_type,
@@ -119,7 +127,10 @@ async def _process_link(
             lessons=[l.to_dict() for l in schedule.lessons],
             source_file_id=file_id, faculty=group_faculty,
         )
+        saved_lessons += saved_count
         saved_groups.append(schedule.group)
+        if changed:
+            changed_groups.append(schedule.group)
 
     error = None if saved_groups else "Не удалось распознать ни одной группы"
     repo.upsert_file(
@@ -134,17 +145,24 @@ async def _process_link(
     processed = ProcessedFile(
         title=link.title, file_type=link.file_type,
         schedule_date=link.schedule_date, groups=saved_groups,
-        lessons_saved=saved_lessons,
+        lessons_saved=saved_lessons, changed_groups=changed_groups,
     )
     report.new_files.append(processed)
 
-    if bot is not None and link.file_type == "changes":
-        await notify_about_changes(
-            bot, schedule_date=link.schedule_date, groups=saved_groups, title=link.title
+    if bot is not None and notify_users and changed_groups:
+        is_new_day = link.file_type != "changes" and not had_any_prior_schedule
+        await notify_about_schedule_update(
+            bot,
+            schedule_date=link.schedule_date,
+            groups=changed_groups,
+            title=link.title,
+            is_new=is_new_day,
         )
 
 
-async def check_for_updates(bot=None, force_reprocess: bool = False) -> UpdateReport:
+async def check_for_updates(
+    bot=None, force_reprocess: bool = False, notify_users: bool = True
+) -> UpdateReport:
     """Полный цикл проверки. Никогда не выбрасывает исключение наружу."""
     config = get_config()
     report = UpdateReport()
@@ -171,6 +189,7 @@ async def check_for_updates(bot=None, force_reprocess: bool = False) -> UpdateRe
                 bot=bot,
                 faculty=faculty,
                 force_reprocess=force_reprocess,
+                notify_users=notify_users,
             )
         except Exception as exc:
             logger.exception("Ошибка обработки ссылки %s", link.url)
