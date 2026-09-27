@@ -101,7 +101,11 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
 
     if not items:
         header.append("")
-        header.append("На этот день расписание не найдено.")
+        # Воскресенье — специальное сообщение
+        if day.weekday() == 6:  # 6 = воскресенье
+            header.append("Воскресенье — выходной 🎉")
+        else:
+            header.append("На этот день расписание не найдено.")
         return "\n".join(header)
 
     lines = header + [""]
