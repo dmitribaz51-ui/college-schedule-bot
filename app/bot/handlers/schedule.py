@@ -73,7 +73,7 @@ async def ask_date(message: Message, state: FSMContext) -> None:
     await state.set_state(ScheduleStates.waiting_date)
     kb = pick_date_keyboard(dates)
     await message.answer(
-        "Введите дату в формате <code>ДД.ММ.ГГГГ</code> (можно <code>10.09</code>)." + hint,
+        "Введите дату в формате <code>ДД.ММ.ГГГГ</code> (пример <code>10.09</code>)." + hint,
         reply_markup=kb,
     )
 
