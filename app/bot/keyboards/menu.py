@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from aiogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     KeyboardButton, ReplyKeyboardMarkup,
@@ -83,3 +85,20 @@ def admin_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="👥 Пользователи по группам", callback_data="admin:groups")],
         ]
     )
+
+
+WEEKDAY_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+
+
+def pick_date_keyboard(dates: list[date]) -> InlineKeyboardMarkup | None:
+    """Один ряд до 3 кнопок свежих дат. None — если дат нет."""
+    if not dates:
+        return None
+    buttons = [
+        InlineKeyboardButton(
+            text=f"{d.strftime('%d.%m')} {WEEKDAY_SHORT[d.weekday()]}",
+            callback_data=f"pickdate:{d.isoformat()}",
+        )
+        for d in dates[:3]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])

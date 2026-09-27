@@ -7,10 +7,11 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from app.bot.keyboards.menu import (
     BTN_CHANGES, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW, main_menu,
+    pick_date_keyboard,
 )
 from app.database import repository as repo
 from app.services.schedule_service import format_day_schedule, format_recent_changes
@@ -70,8 +71,10 @@ async def ask_date(message: Message, state: FSMContext) -> None:
     if dates:
         hint = "\n\nЕсть данные на: " + ", ".join(d.strftime("%d.%m") for d in dates)
     await state.set_state(ScheduleStates.waiting_date)
+    kb = pick_date_keyboard(dates)
     await message.answer(
-        "Введите дату в формате <code>ДД.ММ.ГГГГ</code> (можно <code>10.09</code>)." + hint
+        "Введите дату в формате <code>ДД.ММ.ГГГГ</code> (можно <code>10.09</code>)." + hint,
+        reply_markup=kb,
     )
 
 
@@ -91,3 +94,28 @@ async def show_by_date(message: Message, state: FSMContext) -> None:
 async def show_changes(message: Message) -> None:
     selected = _user_group(message.from_user.id)
     await message.answer(format_recent_changes(selected[0] if selected else None))
+
+
+@router.callback_query(F.data.startswith("pickdate:"))
+async def pick_date(callback: CallbackQuery, state: FSMContext) -> None:
+    from datetime import date as date_type
+    
+    raw = (callback.data or "").removeprefix("pickdate:")
+    try:
+        day = date_type.fromisoformat(raw)
+    except ValueError:
+        await callback.answer("Некорректная дата", show_alert=True)
+        return
+
+    await state.clear()  # ВАЖНО: выходим из режима waiting_date
+
+    selected = _user_group(callback.from_user.id)
+    if not selected:
+        await callback.answer("Сначала выберите группу — отправьте /start.", show_alert=True)
+        return
+
+    await callback.answer()  # закрыть «часики» Telegram
+    if callback.message is not None:
+        await callback.message.answer(
+            format_day_schedule(selected[0], day, selected[1], selected[2])
+        )
