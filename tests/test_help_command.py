@@ -86,7 +86,15 @@ def test_help_and_unknown_commands() -> None:
                 transport.reset_mock()
                 await send("абракадабра")
                 assert not any("Не понял дату" in text for text in sent_texts())
-                print("PASS: help, unknown command, state reset")
+
+                # When: короткие команды /date и /changes.
+                transport.reset_mock()
+                await send("/date")
+                assert any("Введите дату" in text for text in sent_texts())
+                transport.reset_mock()
+                await send("/changes")
+                assert any("Файлы изменений" in text for text in sent_texts())
+                print("PASS: help, unknown command, state reset, shortcuts")
         finally:
             await bot.session.close()
             start.router.parent_router.sub_routers.remove(start.router)

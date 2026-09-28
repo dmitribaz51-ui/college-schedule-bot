@@ -61,6 +61,19 @@ async def show_tomorrow(message: Message) -> None:
         await message.answer(format_day_schedule(group[0], tomorrow_perm(), group[1], group[2]))
 
 
+@router.message(Command("date"))
+async def cmd_pick_date(message: Message, state: FSMContext) -> None:
+    """Командный shortcut кнопки «Выбрать дату»."""
+    await ask_date(message, state)
+
+
+@router.message(Command("changes"))
+async def cmd_changes(message: Message) -> None:
+    """Командный shortcut кнопки «Последние изменения»."""
+    selected = _user_group(message.from_user.id)
+    await message.answer(format_recent_changes(selected[0] if selected else None))
+
+
 @router.message(F.text == BTN_PICK_DATE)
 async def ask_date(message: Message, state: FSMContext) -> None:
     group = await _require_group(message)
