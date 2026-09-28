@@ -5,7 +5,9 @@ from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+)
 
 from app.bot.keyboards.menu import admin_keyboard
 from app.config import get_config
@@ -14,25 +16,97 @@ from app.services.update_service import check_for_updates
 
 router = Router(name="admin")
 
+GROUPS_PAGE_SIZE = 25
+TEXT_LIMIT = 3500
+
 
 def _is_admin(telegram_id: int) -> bool:
     return get_config().is_admin(telegram_id)
+
+
+def _panel_text() -> str:
+    stats = repo.users_stats()
+    return (
+        "🛠 <b>Админ-панель</b>\n\n"
+        f"👥 Пользователей: {stats['total']}\n"
+        f"🎓 С выбранной группой: {stats['with_group']}\n"
+        f"🔔 С уведомлениями: {stats['notifications_on']}\n"
+        f"🗂 Файлов в базе: {repo.count_files()}\n"
+        f"📚 Записей расписания: {repo.count_lessons()}"
+    )
+
+
+def _require_message(callback: CallbackQuery) -> Message | None:
+    return callback.message if isinstance(callback.message, Message) else None
+
+
+def _groups_keyboard(
+    rows: list[tuple[str, int]], page: int, total_pages: int
+) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=f"{group} — {count}", callback_data=f"admin:g:{group}:{page}")]
+        for group, count in rows
+    ]
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"admin:glist:{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"admin:glist:{page + 1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="admin:panel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def _show_groups_page(message: Message, page: int) -> None:
+    rows = repo.users_by_group()
+    if not rows:
+        await message.answer("Пока никто не выбрал группу.")
+        return
+    total_pages = (len(rows) + GROUPS_PAGE_SIZE - 1) // GROUPS_PAGE_SIZE
+    page = min(max(page, 0), total_pages - 1)
+    chunk = rows[page * GROUPS_PAGE_SIZE:(page + 1) * GROUPS_PAGE_SIZE]
+    title = "👥 <b>Пользователи по группам</b> — выберите группу:"
+    if total_pages > 1:
+        title += f"\nСтр. {page + 1}/{total_pages}"
+    await message.edit_text(title, reply_markup=_groups_keyboard(chunk, page, total_pages))
+
+
+def _split_text(text: str, limit: int = TEXT_LIMIT) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        piece = line if not current else current + "\n" + line
+        if len(piece) > limit and current:
+            chunks.append(current)
+            current = line
+        else:
+            current = piece
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 @router.message(Command("admin"))
 async def admin_panel(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         return
-    stats = repo.users_stats()
-    await message.answer(
-        "🛠 <b>Админ-панель</b>\n\n"
-        f"👥 Пользователей: {stats['total']}\n"
-        f"🎓 С выбранной группой: {stats['with_group']}\n"
-        f"🔔 С уведомлениями: {stats['notifications_on']}\n"
-        f"🗂 Файлов в базе: {repo.count_files()}\n"
-        f"📚 Записей расписания: {repo.count_lessons()}",
-        reply_markup=admin_keyboard(),
-    )
+    await message.answer(_panel_text(), reply_markup=admin_keyboard())
+
+
+@router.callback_query(F.data == "admin:panel")
+async def admin_panel_back(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    message = _require_message(callback)
+    if message is None:
+        await callback.answer("Откройте /admin заново", show_alert=True)
+        return
+    await callback.answer()
+    await message.edit_text(_panel_text(), reply_markup=admin_keyboard())
 
 
 @router.callback_query(F.data == "admin:check")
@@ -74,27 +148,59 @@ async def admin_groups(callback: CallbackQuery) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
-    if not isinstance(callback.message, Message):
+    message = _require_message(callback)
+    if message is None:
         await callback.answer("Откройте /admin заново", show_alert=True)
         return
     await callback.answer()
-    rows = repo.users_by_group()
-    if not rows:
-        await callback.message.answer("Пока никто не выбрал группу.")
-    else:
-        text = "👥 <b>Пользователи по группам</b>"
-        for group, count in rows:
-            heading = f"\n\n<b>• {escape(group)}: {count}</b>"
-            if len(text) + len(heading) > 3500:
-                await callback.message.answer(text, parse_mode="HTML")
-                text = "👥 <b>Пользователи по группам</b>"
-            text += heading
-            users = repo.get_users_by_groups([group], only_enabled=False)
-            for user in sorted(users, key=lambda item: item.telegram_id):
-                label = f"@{escape(user.username)}" if user.username else str(user.telegram_id)
-                line = f"\n    {label}"
-                if len(text) + len(line) > 3500:
-                    await callback.message.answer(text, parse_mode="HTML")
-                    text = f"<b>• {escape(group)} (продолжение)</b>"
-                text += line
-        await callback.message.answer(text, parse_mode="HTML")
+    await _show_groups_page(message, 0)
+
+
+@router.callback_query(F.data.startswith("admin:glist:"))
+async def admin_groups_page(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    message = _require_message(callback)
+    if message is None:
+        await callback.answer("Откройте /admin заново", show_alert=True)
+        return
+    try:
+        page = int((callback.data or "").rsplit(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректная страница", show_alert=True)
+        return
+    await callback.answer()
+    await _show_groups_page(message, page)
+
+
+@router.callback_query(F.data.startswith("admin:g:"))
+async def admin_group_detail(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    message = _require_message(callback)
+    if message is None:
+        await callback.answer("Откройте /admin заново", show_alert=True)
+        return
+    payload = (callback.data or "").removeprefix("admin:g:")
+    group, _, page_raw = payload.rpartition(":")
+    try:
+        page = int(page_raw)
+    except ValueError:
+        await callback.answer("Некорректная группа", show_alert=True)
+        return
+    await callback.answer()
+
+    users = repo.get_users_by_groups([group], only_enabled=False)
+    lines = [f"<b>• {escape(group)}: {len(users)}</b>", ""]
+    for user in sorted(users, key=lambda item: item.telegram_id):
+        label = f"@{escape(user.username)}" if user.username else str(user.telegram_id)
+        lines.append(f"    {label}")
+    chunks = _split_text("\n".join(lines))
+    back = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ К группам", callback_data=f"admin:glist:{page}")
+    ]])
+    await message.edit_text(chunks[0], reply_markup=back, parse_mode="HTML")
+    for chunk in chunks[1:]:
+        await message.answer(chunk, parse_mode="HTML")
