@@ -49,31 +49,9 @@ def get_day_schedule(group: str, day: date, faculty: str = "permskaya", course: 
     base = {l.lesson_number: l for l in rows if l.source_type == "schedule"}
     changes = {l.lesson_number: l for l in rows if l.source_type == "changes"}
 
-    merged = dict(base)
-
-    for number, change in changes.items():
-        if number not in merged:
-            merged[number] = change
-            continue
-
-        lesson = copy(merged[number])
-
-        if change.subject:
-            lesson.subject = change.subject
-            lesson.source_file_id = change.source_file_id
-
-        if change.teacher:
-            lesson.teacher = change.teacher
-
-        if change.room:
-            # Кабинет приоритетно берётся из основного расписания.
-            # Изменения не затирают его ошибочно распознанным значением.
-            lesson.room = lesson.room or change.room
-
-        if change.notes:
-            lesson.notes = change.notes
-
-        merged[number] = lesson
+    # Файл изменений для группы является актуальным расписанием дня целиком.
+    # Поэтому отменённые пары, которых в нём нет, нельзя оставлять из базы.
+    merged = dict(changes) if changes else dict(base)
 
     def _item_sort_key(item: tuple[int, any, bool]) -> tuple[str, int]:
         number, lesson, _ = item

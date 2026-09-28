@@ -75,3 +75,28 @@ def test_time_cell_is_not_lesson_number() -> None:
     assert parse_lesson_number("08:30:00") is None
     assert parse_lesson_number("I 09:15") == 1
     assert parse_lesson_number("3") == 3
+
+
+def test_changes_replace_cancelled_base_lessons_and_room() -> None:
+    base = [
+        Lesson(subject="Старая пара 3", teacher="Старый", room="101",
+               lesson_number=3, source_type="schedule"),
+        Lesson(subject="Старая пара 4", teacher="Старый", room="204",
+               lesson_number=4, source_type="schedule"),
+        Lesson(subject="Отменённая пара 5", teacher="Смирнова ВЕ", room="204",
+               lesson_number=5, source_type="schedule"),
+    ]
+    changes = [
+        Lesson(subject="Прикладные компьютерные программы", teacher="Аликин АМ",
+               room="305а", lesson_number=3, source_type="changes"),
+        Lesson(subject="Прикладные компьютерные программы", teacher="Аликин АМ",
+               room="305а", lesson_number=4, source_type="changes"),
+    ]
+    with patch.object(schedule_service.repo, "get_lessons", return_value=base + changes):
+        items, has_changes = schedule_service.get_day_schedule(
+            "ТД-24-9", date(2026, 9, 29)
+        )
+
+    assert has_changes is True
+    assert [number for number, _, _ in items] == [3, 4]
+    assert all(lesson.room == "305а" for _, lesson, _ in items)
