@@ -93,7 +93,35 @@ ROOM_SPECIAL_RE = re.compile(
 )
 ROOM_PLAIN_RE = re.compile(r"(?<![\w/])(\d{1,3}[а-яА-Я]?)(?![\w/])")
 NOTES_RE = re.compile(r"\(([^)]{2,60})\)")
+# Висячий номер кабинета в конце названия предмета («... деятельности 302а»).
+# Минимум 2 цифры, чтобы не цеплять «Раздел 1» и подобные хвосты.
+TRAILING_ROOM_RE = re.compile(r"\s(\d{2,3}[а-яёА-ЯЁa-zA-Z]?)\s*$")
 MAX_HEADER_CELL_LEN = 40
+
+
+def normalize_subject_room(
+    subject: str | None, room: str | None
+) -> tuple[str | None, str | None]:
+    """Убирает висячий номер кабинета из конца предмета в строку кабинетов.
+
+    «Прикладные ... деятельности 302а» + room «305а»
+      -> («Прикладные ... деятельности», «302а & 305а»).
+    Дубли («... / 204» + room «204») просто чистятся, без задвоения.
+    """
+    if not subject or not room:
+        return subject, room
+    match = TRAILING_ROOM_RE.search(subject)
+    if not match:
+        return subject, room
+    trailing = match.group(1)
+    parts = [p.strip() for p in room.split("&") if p.strip()]
+    if trailing in parts:
+        cleaned = subject[: match.start(1)].strip().rstrip(" /-–—,;.")
+        return (cleaned or subject), room
+    cleaned = subject[: match.start(1)].strip().rstrip(" /-–—,;.")
+    if not cleaned:
+        return subject, room
+    return cleaned, f"{trailing} & {room}"
 
 
 @dataclass
@@ -248,18 +276,33 @@ def split_lesson_text(text: str) -> ParsedLesson:
     room = None
 
     # Основной формат: преподаватель / кабинет.
+    # После слэша может быть ДВА кабинета через пробел: «/ 302а 305а».
     # Берём последний слэш с номером: «каб.410/ 406» — это кабинет 406, не 410.
     slash_room = None
     for slash_room in re.finditer(
-        r"/\s*([0-9]{1,3}[А-Яа-яA-Za-z]?)\s*",
+        r"/\s*([0-9]{1,3}[А-Яа-яA-Za-z]?(?:\s*[&,/]\s*[0-9]{1,3}[А-Яа-яA-Za-z]?|\s+[0-9]{1,3}[А-Яа-яA-Za-z]?)*)\s*",
         rest,
     ):
         pass
 
     if slash_room:
-        room = slash_room.group(1).strip()
-        rest = rest[: slash_room.start()] + " " + rest[slash_room.end():]
-    else:
+        raw_rooms = slash_room.group(1).strip()
+        tokens = [
+            t for t in re.split(r"[\s,&/]+", raw_rooms) if t
+        ]
+        tokens = [
+            t for t in tokens
+            if re.fullmatch(r"[0-9]{1,3}[А-Яа-яA-Za-z]?", t)
+        ]
+        if tokens:
+            # порядок как в источнике: «302а 305а» -> «302а & 305а»
+            seen: list[str] = []
+            for tok in tokens:
+                if tok not in seen:
+                    seen.append(tok)
+            room = " & ".join(seen)
+            rest = rest[: slash_room.start()] + " " + rest[slash_room.end():]
+    if not room:
         match = ROOM_KEYWORD_RE.search(rest)
         if match:
             room = _clean(match.group(1))
@@ -285,8 +328,12 @@ def split_lesson_text(text: str) -> ParsedLesson:
         )
 
     subject = _clean(rest).strip(" /-–—,;.")
+    subject, room = normalize_subject_room(subject or None, room)
     if not subject:
-        subject = original
+        # Текст из одного преподавателя/кабинета («Аликин АМ/305а» второй строкой
+        # пары) — предметом не является, иначе _append_text склеит мусор
+        # «Классный час Степанова СС / 302а».
+        subject = None if (teacher or room) else original
     return ParsedLesson(
         number=0, subject=subject or None, teacher=teacher, room=room, notes=notes
     )
@@ -343,10 +390,21 @@ def _append_text(lesson: ParsedLesson, text: str) -> None:
     extra = split_lesson_text(text)
     if not lesson.teacher and extra.teacher:
         lesson.teacher = extra.teacher
-    if not lesson.room and extra.room:
-        lesson.room = extra.room
+    if extra.room:
+        if not lesson.room:
+            lesson.room = extra.room
+        elif extra.room != lesson.room:
+            # две строки дали разные кабинеты — склеиваем без дублей
+            existing = [p.strip() for p in lesson.room.split("&") if p.strip()]
+            for part in [p.strip() for p in extra.room.split("&") if p.strip()]:
+                if part not in existing:
+                    existing.append(part)
+            lesson.room = " & ".join(existing)
     if extra.subject and extra.subject not in (lesson.subject or ""):
         lesson.subject = f"{lesson.subject} {extra.subject}".strip() if lesson.subject else extra.subject
+    # вторая строка принесла кабинет («Аликин АМ/305а»), а в предмете первой
+    # строки висел свой («... деятельности 302а») -> «302а & 305а»
+    lesson.subject, lesson.room = normalize_subject_room(lesson.subject, lesson.room)
 
 
 def _find_date_in_grid(grid: list[list[str]], scan_rows: int = 12) -> date | None:

@@ -6,7 +6,7 @@ from copy import copy
 from datetime import date
 
 from app.database import repository as repo
-from app.parser.excel_parser import MIDDAY_CLASS_HOUR, split_lesson_text
+from app.parser.excel_parser import MIDDAY_CLASS_HOUR, normalize_subject_room, split_lesson_text
 from app.services.class_hour import get_class_hour_range
 from app.utils import human_date, get_lesson_times
 
@@ -40,9 +40,25 @@ def get_day_schedule(group: str, day: date, faculty: str = "permskaya", course: 
     for stored in repo.get_lessons(day, group, faculty):
         lesson = copy(stored)
         parsed = split_lesson_text(stored.subject or "")
-        lesson.subject = parsed.subject
-        lesson.teacher = stored.teacher or parsed.teacher
-        lesson.room = stored.room or parsed.room
+        subject = parsed.subject or stored.subject
+        teacher = stored.teacher or parsed.teacher
+        room = stored.room
+        if parsed.room:
+            if not room:
+                room = parsed.room
+            elif parsed.room != room:
+                existing = [p.strip() for p in room.split("&") if p.strip()]
+                for part in [p.strip() for p in parsed.room.split("&") if p.strip()]:
+                    if part not in existing:
+                        existing.append(part)
+                room = " & ".join(existing)
+        # legacy-строки из БД: «... деятельности 302а» + room «305а»
+        # -> предмет без номера, кабинеты «302а & 305а» (сразу видно в боте,
+        # без принудительной перепарсировки файлов через админку)
+        subject, room = normalize_subject_room(subject, room)
+        lesson.subject = subject
+        lesson.teacher = teacher
+        lesson.room = room
         lesson.notes = stored.notes or parsed.notes
         rows.append(lesson)
 
