@@ -57,6 +57,6 @@ async def info(message: Message) -> None:
         "расписание вашей группы.\n\n"
         f"⏱ Интервал проверки: каждые {config.check_interval_minutes} мин.\n"
         "🌐 Источник: <a href=\"https://pkps-perm.ru/students/raspisanie/\">сайт колледжа</a>\n\n"
-        "Команды: /start, /today, /tomorrow",
+        "Команды: /start, /today, /tomorrow, /help",
         disable_web_page_preview=True,
     )
