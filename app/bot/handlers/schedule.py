@@ -78,6 +78,22 @@ async def ask_date(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(F.text == BTN_CHANGES)
+async def show_changes(message: Message) -> None:
+    selected = _user_group(message.from_user.id)
+    await message.answer(format_recent_changes(selected[0] if selected else None))
+
+
+@router.message(F.text.startswith("/"))
+async def unknown_command(message: Message, state: FSMContext) -> None:
+    """Неизвестная команда: выходит из режима выбора даты, датой не считается."""
+    await state.clear()
+    await message.answer(
+        "Неизвестная команда. Используйте меню ниже 👇",
+        reply_markup=main_menu(),
+    )
+
+
 @router.message(ScheduleStates.waiting_date)
 async def show_by_date(message: Message, state: FSMContext) -> None:
     day = parse_user_date(message.text or "")
@@ -88,12 +104,6 @@ async def show_by_date(message: Message, state: FSMContext) -> None:
     group = await _require_group(message)
     if group:
         await message.answer(format_day_schedule(group[0], day, group[1], group[2]))
-
-
-@router.message(F.text == BTN_CHANGES)
-async def show_changes(message: Message) -> None:
-    selected = _user_group(message.from_user.id)
-    await message.answer(format_recent_changes(selected[0] if selected else None))
 
 
 @router.callback_query(F.data.startswith("pickdate:"))

@@ -4,12 +4,15 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from app.bot.keyboards.menu import courses_keyboard, faculties_keyboard, groups_keyboard, main_menu
+from app.bot.keyboards.menu import (
+    BTN_CHANGES, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW,
+    courses_keyboard, faculties_keyboard, groups_keyboard, main_menu,
+)
 from app.database import repository as repo
 from app.utils import normalize_group
 
@@ -53,6 +56,28 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
     await message.answer(greeting)
     await ask_faculty(message, state)
+
+
+HELP_TEXT = (
+    "ℹ️ <b>Помощь</b>\n\n"
+    "Я бот расписания колледжа ПКПС: сам слежу за сайтом и показываю "
+    "актуальное расписание вашей группы.\n\n"
+    "<b>Меню:</b>\n"
+    f"• {BTN_TODAY} — расписание на сегодня\n"
+    f"• {BTN_TOMORROW} — расписание на завтра\n"
+    f"• {BTN_PICK_DATE} — расписание на любой день: нажмите кнопку с датой "
+    "или введите её текстом, например <code>10.09.2026</code>\n"
+    f"• {BTN_CHANGES} — последние опубликованные изменения\n\n"
+    "<b>Команды:</b> /start — сменить группу, /help — эта справка.\n\n"
+    "Если меню пропало — отправьте /start."
+)
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message, state: FSMContext) -> None:
+    """Справка по боту; заодно выводит из режима выбора даты."""
+    await state.clear()
+    await message.answer(HELP_TEXT, reply_markup=main_menu())
 
 
 @router.callback_query(F.data == "back_to_courses")
