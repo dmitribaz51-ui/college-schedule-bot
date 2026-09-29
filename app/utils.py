@@ -54,8 +54,8 @@ def get_lesson_times(day: date, faculty: str = "permskaya", course: int | None =
     """Возвращает таблицу времен пар для конкретной даты."""
     weekday = day.weekday()
     
-    # Особое расписание для пятницы 04.10.2024 (разово): звонки по часу как в субботу
-    if day == date(2024, 10, 4):
+    # Особое расписание для пятницы 02.10.2026 (разово): звонки по часу как в субботу
+    if day == date(2026, 10, 2):
         return LESSON_TIMES_SATURDAY
     
     if faculty == "chernyshevskogo":
