@@ -90,8 +90,19 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
     items, has_changes = get_day_schedule(group, day, faculty, course)
 
     header = [f"📅 <b>Расписание на {human_date(day)}</b>", f"👨‍🎓 Группа: <b>{group}</b>"]
+    
+    # Особое уведомление для пятницы 04.10.2024 (разово): расписание по часу
+    if day == date(2024, 10, 4):
+        header.append("⏰ <i>В эту пятницу расписание звонков — по часу (как в субботу)</i>")
+    
     if has_changes:
         header.append("⚠️ <i>С учётом опубликованных изменений</i>")
+
+    # Особый выходной для субботы 05.10.2024 (разово)
+    if day == date(2024, 10, 5):
+        header.append("")
+        header.append("Сегодня выходной 🎉")
+        return "\n".join(header)
 
     if not items:
         header.append("")

@@ -53,6 +53,11 @@ LESSON_TIMES_CHERN_MONDAY_24 = {0: ("08:30", "09:10"), 1: ("09:15", "10:40"), 2:
 def get_lesson_times(day: date, faculty: str = "permskaya", course: int | None = None) -> dict[int, tuple[str, str]]:
     """Возвращает таблицу времен пар для конкретной даты."""
     weekday = day.weekday()
+    
+    # Особое расписание для пятницы 04.10.2024 (разово): звонки по часу как в субботу
+    if day == date(2024, 10, 4):
+        return LESSON_TIMES_SATURDAY
+    
     if faculty == "chernyshevskogo":
         if weekday == 0:
             return LESSON_TIMES_CHERN_MONDAY_1 if course == 1 else LESSON_TIMES_CHERN_MONDAY_24
