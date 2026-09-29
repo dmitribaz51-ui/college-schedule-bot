@@ -7,6 +7,7 @@ from datetime import date
 
 from app.database import repository as repo
 from app.parser.excel_parser import MIDDAY_CLASS_HOUR, normalize_subject_room, split_lesson_text
+from app.services.bell_times import get_lesson_time_range
 from app.services.class_hour import get_class_hour_range
 from app.utils import human_date, get_lesson_times
 
@@ -77,6 +78,9 @@ def get_day_schedule(group: str, day: date, faculty: str = "permskaya", course: 
             if time_range and time_range[0]:
                 return (time_range[0], number)
         lesson_times = get_lesson_times(day, faculty, course)
+        file_time = get_lesson_time_range(lesson.source_file_id, group, number)
+        if file_time:
+            return (file_time[0], number)
         if number in lesson_times:
             return (lesson_times[number][0], number)
         return (f"{number:02d}:00", number)
@@ -90,11 +94,11 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
     items, has_changes = get_day_schedule(group, day, faculty, course)
 
     header = [f"📅 <b>Расписание на {human_date(day)}</b>", f"👨‍🎓 Группа: <b>{group}</b>"]
-    
+
     # Особое уведомление для пятницы 02.10.2026 (разово): расписание по часу
     if day == date(2026, 10, 2):
         header.append("⏰ <i>В эту пятницу расписание звонков — по часу (как в субботу)</i>")
-    
+
     if has_changes:
         header.append("⚠️ <i>С учётом опубликованных изменений</i>")
 
@@ -127,9 +131,12 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
             time_range = _class_hour_range(lesson, group)
             if time_range:
                 time_str = f" <code>{time_range[0]}-{time_range[1]}</code>"
-        elif number in lesson_times:
-            start, end = lesson_times[number]
-            time_str = f" <code>{start}-{end}</code>"
+        else:
+            time_range = get_lesson_time_range(lesson.source_file_id, group, number)
+            time_range = time_range or lesson_times.get(number)
+            if time_range:
+                start, end = time_range
+                time_str = f" <code>{start}-{end}</code>"
         
         # «проф.ком», «проф.деят» Telegram принимает за адрес сайта и красит
         # синим. Невидимый знак после точки ломает автоопределение ссылки.
