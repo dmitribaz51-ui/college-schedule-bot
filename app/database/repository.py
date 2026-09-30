@@ -97,6 +97,36 @@ def users_by_group() -> list[tuple[str, int]]:
         return [(r[0], r[1]) for r in rows]
 
 
+def get_all_users() -> list[User]:
+    """Возвращает всех зарегистрированных пользователей для ручной рассылки."""
+    with get_session() as s:
+        return list(s.scalars(select(User).order_by(User.telegram_id)))
+
+
+def get_notification_users() -> list[User]:
+    """Возвращает пользователей с включёнными уведомлениями."""
+    with get_session() as s:
+        return list(
+            s.scalars(
+                select(User)
+                .where(User.notifications_enabled.is_(True))
+                .order_by(User.telegram_id)
+            )
+        )
+
+
+def get_group_users(group_name: str) -> list[User]:
+    """Возвращает всех пользователей конкретной группы."""
+    with get_session() as s:
+        return list(
+            s.scalars(
+                select(User)
+                .where(User.group_name == group_name)
+                .order_by(User.telegram_id)
+            )
+        )
+
+
 def find_user_by_username(username: str) -> User | None:
     """Ищет пользователя по username (без @)."""
     normalized = username.lstrip("@").lower()

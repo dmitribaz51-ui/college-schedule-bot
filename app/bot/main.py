@@ -8,7 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from app.bot.handlers import admin, schedule, settings, start
+from app.bot.handlers import admin, broadcast, schedule, settings, start
 from app.config import get_config
 from app.database.database import init_db
 from app.scheduler.jobs import setup_scheduler
@@ -28,6 +28,7 @@ async def main() -> None:
     )
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(admin.router)
+    dp.include_router(broadcast.router)
     dp.include_router(start.router)
     dp.include_router(schedule.router)
     dp.include_router(settings.router)
