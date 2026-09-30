@@ -83,6 +83,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🔄 Проверить сайт сейчас", callback_data="admin:check")],
             [InlineKeyboardButton(text="🗂 Последние файлы", callback_data="admin:files")],
             [InlineKeyboardButton(text="👥 Пользователи по группам", callback_data="admin:groups")],
+            [InlineKeyboardButton(text="🔍 Поиск по username", callback_data="admin:search")],
         ]
     )
 

@@ -97,6 +97,15 @@ def users_by_group() -> list[tuple[str, int]]:
         return [(r[0], r[1]) for r in rows]
 
 
+def find_user_by_username(username: str) -> User | None:
+    """Ищет пользователя по username (без @)."""
+    normalized = username.lstrip("@").lower()
+    with get_session() as s:
+        return s.scalar(
+            select(User).where(func.lower(User.username) == normalized)
+        )
+
+
 # ------------------------------------------------------------------- файлы
 def get_file_by_url(url: str) -> ScheduleFile | None:
     with get_session() as s:

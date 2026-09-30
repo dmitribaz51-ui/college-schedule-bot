@@ -5,6 +5,8 @@ from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message,
 )
@@ -15,6 +17,10 @@ from app.database import repository as repo
 from app.services.update_service import check_for_updates
 
 router = Router(name="admin")
+
+
+class AdminStates(StatesGroup):
+    waiting_username = State()
 
 GROUPS_PAGE_SIZE = 25
 TEXT_LIMIT = 3500
@@ -204,3 +210,42 @@ async def admin_group_detail(callback: CallbackQuery) -> None:
     await message.edit_text(chunks[0], reply_markup=back, parse_mode="HTML")
     for chunk in chunks[1:]:
         await message.answer(chunk, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin:search")
+async def admin_search_user(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_username)
+    await callback.message.answer(
+        "🔍 Введите username для поиска (с @ или без):"
+    )
+
+
+@router.message(AdminStates.waiting_username)
+async def process_username_search(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    await state.clear()
+    
+    username = (message.text or "").strip()
+    if not username:
+        await message.answer("Вы не ввели username.")
+        return
+    
+    user = repo.find_user_by_username(username)
+    if user is None:
+        await message.answer("Пользователь не найден.")
+        return
+    
+    username_display = f"@{escape(user.username)}" if user.username else str(user.telegram_id)
+    group_display = escape(user.group_name) if user.group_name else "<i>не выбрана</i>"
+    
+    await message.answer(
+        f"✅ <b>Найден пользователь:</b>\n\n"
+        f"Username: {username_display}\n"
+        f"Группа: {group_display}",
+        parse_mode="HTML"
+    )
