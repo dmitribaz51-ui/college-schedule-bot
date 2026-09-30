@@ -48,6 +48,41 @@ class ScheduleFile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Broadcast(Base):
+    """Ручная админская рассылка: история, черновики, отложенные."""
+
+    __tablename__ = "broadcasts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    audience_type: Mapped[str] = mapped_column(String(16))  # all | group | enabled
+    group_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    content_type: Mapped[str] = mapped_column(String(16), default="text")  # text | photo | document
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | scheduled | sending | sent | cancelled
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    total_recipients: Mapped[int] = mapped_column(Integer, default=0)
+    sent_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class BroadcastDelivery(Base):
+    """Детализация доставки одной рассылки по пользователям."""
+
+    __tablename__ = "broadcast_deliveries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    broadcast_id: Mapped[int] = mapped_column(ForeignKey("broadcasts.id"), index=True)
+    telegram_id: Mapped[int] = mapped_column(Integer, index=True)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16))  # sent | failed
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Lesson(Base):
     __tablename__ = "lessons"
     __table_args__ = (

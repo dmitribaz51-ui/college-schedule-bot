@@ -22,6 +22,30 @@ async def check_updates_job(bot: Bot) -> None:
         logger.exception("Ошибка в задаче проверки сайта")
 
 
+async def send_due_broadcasts_job(bot: Bot) -> None:
+    """Отправляет отложенные ручные рассылки, время которых наступило."""
+    try:
+        from datetime import datetime
+
+        from app.database import broadcast_repo
+        from app.services.manual_broadcast_service import send_stored_broadcast
+
+        due = broadcast_repo.list_due_scheduled(datetime.now())
+        for record in due:
+            try:
+                result = await send_stored_broadcast(bot, record.id)
+                logger.info(
+                    "Отложенная рассылка №%s отправлена: %s/%s",
+                    record.id,
+                    result.sent,
+                    result.total,
+                )
+            except Exception:
+                logger.exception("Ошибка отправки отложенной рассылки №%s", record.id)
+    except Exception:
+        logger.exception("Ошибка задачи отложенных рассылок")
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     config = get_config()
     scheduler = AsyncIOScheduler()
@@ -35,6 +59,16 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         coalesce=True,
         misfire_grace_time=300,
         next_run_time=datetime.now() + timedelta(seconds=15),  # первая проверка сразу
+    )
+    scheduler.add_job(
+        send_due_broadcasts_job,
+        trigger="interval",
+        minutes=1,
+        args=[bot],
+        id="send_due_broadcasts",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
     )
     logger.info("Планировщик: проверка каждые %s мин.", config.check_interval_minutes)
     return scheduler
