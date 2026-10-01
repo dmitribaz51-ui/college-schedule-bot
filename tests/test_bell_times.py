@@ -291,16 +291,10 @@ def test_oct2_note_preserved() -> None:
 
 
 def test_oct3_no_holiday_anymore() -> None:
-    """03.10.2026: у Чернышевского «ЭПОС» = выходной (только этот факультет),
-    у остальных — обычное расписание без заглушки."""
+    """03.10.2026 (суббота) — выходной для всех факультетов."""
     with patch.object(schedule_service.repo, "get_lessons", return_value=[]):
         text = schedule_service.format_day_schedule("ТД-24-9", date(2026, 10, 3))
-    assert "Сегодня выходной" not in text
-    assert "На этот день расписание не найдено." in text
+    assert "Сегодня выходной" in text
     with patch.object(schedule_service.repo, "get_lessons", return_value=[]):
         chern = schedule_service.format_day_schedule("ГД-25-9", date(2026, 10, 3), "chernyshevskogo")
     assert "Сегодня выходной" in chern
-    # faculty не передали — определяем по группе
-    with patch.object(schedule_service.repo, "get_lessons", return_value=[]):
-        chern_auto = schedule_service.format_day_schedule("ГД-25-9", date(2026, 10, 3))
-    assert "Сегодня выходной" in chern_auto

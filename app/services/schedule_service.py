@@ -9,7 +9,7 @@ from app.database import repository as repo
 from app.parser.excel_parser import MIDDAY_CLASS_HOUR, normalize_subject_room, split_lesson_text
 from app.services.bell_times import get_lesson_time_range
 from app.services.class_hour import get_class_hour_range
-from app.utils import detect_faculty, human_date, get_lesson_times
+from app.utils import human_date, get_lesson_times
 
 NUMBER_EMOJI = {
     0: "0️⃣", 1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣",
@@ -102,9 +102,9 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
     if has_changes:
         header.append("⚠️ <i>С учётом опубликованных изменений</i>")
 
-    # 03.10.2026: у Чернышевского в расписании стоит «ЭПОС» = не учатся.
-    # Выходной только для этого факультета и только на эту дату.
-    if day == date(2026, 10, 3) and (faculty == "chernyshevskogo" or detect_faculty(group) == "chernyshevskogo"):
+    # 03.10.2026 (суббота) — выходной для всех: на Чернышевского «ЭПОС»,
+    # на Пермской пар тоже нет.
+    if day == date(2026, 10, 3):
         header.append("")
         header.append("Сегодня выходной 🎉")
         return "\n".join(header)
