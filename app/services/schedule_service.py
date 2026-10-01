@@ -102,12 +102,6 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
     if has_changes:
         header.append("⚠️ <i>С учётом опубликованных изменений</i>")
 
-    # Особый выходной для субботы 03.10.2026 (разово)
-    if day == date(2026, 10, 3):
-        header.append("")
-        header.append("Сегодня выходной 🎉")
-        return "\n".join(header)
-
     if not items:
         header.append("")
         # Воскресенье — специальное сообщение

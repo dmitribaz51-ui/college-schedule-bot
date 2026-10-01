@@ -22,7 +22,7 @@ from app.services.bell_times import (
     _resolve_block,
     get_lesson_time_range,
 )
-from app.utils import LESSON_TIMES_SATURDAY, get_lesson_times
+from app.utils import LESSON_TIMES_CHERN_SATURDAY, LESSON_TIMES_SATURDAY, get_lesson_times
 
 BASE = Path(__file__).resolve().parent.parent
 
@@ -277,7 +277,11 @@ def test_real_chern_weekday() -> None:
 
 def test_oct2_override_preserved() -> None:
     assert get_lesson_times(date(2026, 10, 2)) == LESSON_TIMES_SATURDAY
-    assert get_lesson_times(date(2026, 10, 2), "chernyshevskogo") == LESSON_TIMES_SATURDAY
+    assert get_lesson_times(date(2026, 10, 2), "chernyshevskogo") == LESSON_TIMES_CHERN_SATURDAY
+    # Суббота 03.10.2026: на Чернышевского учатся — fallback по часу из расписания,
+    # время/кабинет берутся из файла (bell_times), здесь — из таблицы.
+    assert get_lesson_times(date(2026, 10, 3), "chernyshevskogo") == LESSON_TIMES_CHERN_SATURDAY
+    assert get_lesson_times(date(2026, 10, 3)) == LESSON_TIMES_SATURDAY
 
 
 def test_oct2_note_preserved() -> None:
@@ -286,7 +290,10 @@ def test_oct2_note_preserved() -> None:
     assert "по часу" in text
 
 
-def test_oct3_holiday_preserved() -> None:
+def test_oct3_no_holiday_anymore() -> None:
+    """03.10.2026 — учебная суббота на Чернышевского: заглушки 'выходной' нет,
+    пустой день даёт стандартное 'не найдено', а не 'выходной'."""
     with patch.object(schedule_service.repo, "get_lessons", return_value=[]):
         text = schedule_service.format_day_schedule("ТД-24-9", date(2026, 10, 3))
-    assert "Сегодня выходной" in text
+    assert "Сегодня выходной" not in text
+    assert "На этот день расписание не найдено." in text

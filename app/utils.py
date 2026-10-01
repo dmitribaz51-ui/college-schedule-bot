@@ -68,12 +68,17 @@ def get_lesson_times(day: date, faculty: str = "permskaya", course: int | None =
     weekday = day.weekday()
 
     # Особое расписание для пятницы 02.10.2026 (разово): звонки по часу как в субботу
+    # (для Чернышевского — свой субботний профиль: 4-я 12:30, 5-я 14:00, 6-я 15:10)
     if day == date(2026, 10, 2):
+        if faculty == "chernyshevskogo":
+            return LESSON_TIMES_CHERN_SATURDAY
         return LESSON_TIMES_SATURDAY
 
     if faculty == "chernyshevskogo":
         if weekday == 0:
             return LESSON_TIMES_CHERN_MONDAY_1 if course == 1 else LESSON_TIMES_CHERN_MONDAY_24
+        if weekday == 5:  # суббота: на Чернышевского учатся, пары по часу
+            return LESSON_TIMES_CHERN_SATURDAY
         return LESSON_TIMES_CHERN_WEEKDAY_1 if course == 1 else LESSON_TIMES_CHERN_WEEKDAY_24
     if weekday == 0:  # понедельник
         return LESSON_TIMES_MONDAY
