@@ -28,7 +28,23 @@ def init_db(database_url: str) -> None:
         for table in ("users", "lessons", "schedule_files"):
             columns = {column["name"] for column in inspect(_engine).get_columns(table)}
             if "faculty" not in columns:
-                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN faculty VARCHAR(32) DEFAULT 'permskaya'"))
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {table} "
+                        "ADD COLUMN faculty VARCHAR(32) DEFAULT 'permskaya'"
+                    )
+                )
+        schedule_file_columns = {
+            column["name"]
+            for column in inspect(_engine).get_columns("schedule_files")
+        }
+        if "last_checked" not in schedule_file_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE schedule_files "
+                    "ADD COLUMN last_checked DATETIME"
+                )
+            )
     logger.info("База данных готова: %s", database_url)
 
 
