@@ -9,6 +9,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramRetryAfter
 
 from app.database import repository as repo
+from app.utils import today_perm
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,13 @@ async def notify_about_schedule_update(
     is_new: bool = False,
 ) -> int:
     """Пишет только тем, чья группа затронута и у кого включены уведомления."""
+    if schedule_date is None or schedule_date < today_perm():
+        logger.info(
+            "Уведомление пропущено для неактуальной даты: %s",
+            schedule_date,
+        )
+        return 0
+
     users = repo.get_users_by_groups(groups, only_enabled=True)
     if not users:
         return 0
