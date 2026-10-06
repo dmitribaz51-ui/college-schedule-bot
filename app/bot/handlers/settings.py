@@ -17,6 +17,7 @@ router = Router(name="settings")
 
 @router.message(F.text == BTN_GROUP)
 async def my_group(message: Message, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем режим выбора даты
     user = repo.get_user(message.from_user.id)
     current = user.group_name if user and user.group_name else "не выбрана"
     await message.answer(f"⚙️ Ваша группа: <b>{current}</b>\n\nХотите изменить?")
@@ -24,7 +25,8 @@ async def my_group(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.text == BTN_NOTIFICATIONS)
-async def notifications(message: Message) -> None:
+async def notifications(message: Message, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем режим выбора даты
     user = repo.get_or_create_user(
         message.from_user.id, message.from_user.username, message.from_user.full_name
     )
@@ -48,7 +50,8 @@ async def toggle_notifications(callback: CallbackQuery) -> None:
 
 
 @router.message(F.text == BTN_INFO)
-async def info(message: Message) -> None:
+async def info(message: Message, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем режим выбора даты
     config = get_config()
     await message.answer(
         "ℹ️ <b>О боте</b>\n\n"

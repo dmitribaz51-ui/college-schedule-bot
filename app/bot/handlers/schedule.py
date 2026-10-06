@@ -47,7 +47,8 @@ async def _require_group(message: Message) -> str | None:
 
 @router.message(F.text == BTN_TODAY)
 @router.message(Command("today"))
-async def show_today(message: Message) -> None:
+async def show_today(message: Message, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем режим выбора даты
     group = await _require_group(message)
     if group:
         await message.answer(format_day_schedule(group[0], today_perm(), group[1], group[2]))
@@ -55,7 +56,8 @@ async def show_today(message: Message) -> None:
 
 @router.message(F.text == BTN_TOMORROW)
 @router.message(Command("tomorrow"))
-async def show_tomorrow(message: Message) -> None:
+async def show_tomorrow(message: Message, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем режим выбора даты
     group = await _require_group(message)
     if group:
         await message.answer(format_day_schedule(group[0], tomorrow_perm(), group[1], group[2]))
@@ -68,8 +70,9 @@ async def cmd_pick_date(message: Message, state: FSMContext) -> None:
 
 
 @router.message(Command("changes"))
-async def cmd_changes(message: Message) -> None:
+async def cmd_changes(message: Message, state: FSMContext) -> None:
     """Командный shortcut кнопки «Последние изменения»."""
+    await state.clear()  # Сбрасываем режим выбора даты
     selected = _user_group(message.from_user.id)
     await message.answer(format_recent_changes(selected[0] if selected else None))
 
@@ -92,7 +95,8 @@ async def ask_date(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.text == BTN_CHANGES)
-async def show_changes(message: Message) -> None:
+async def show_changes(message: Message, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем режим выбора даты
     selected = _user_group(message.from_user.id)
     await message.answer(format_recent_changes(selected[0] if selected else None))
 
