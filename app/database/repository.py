@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, func, select
 
@@ -163,6 +163,7 @@ def upsert_file(
     processed: bool = False,
     error: str | None = None,
     faculty: str = "permskaya",
+    update_check_time: bool = False,
 ) -> int:
     """Создаёт или обновляет запись о файле. Дубликаты по url невозможны."""
     with get_session() as s:
@@ -179,6 +180,8 @@ def upsert_file(
         if local_path:
             record.local_path = local_path
             record.downloaded_at = datetime.now()
+        if update_check_time:
+            record.last_checked = datetime.now()
         record.processed = processed
         record.error = error
         s.flush()
@@ -189,6 +192,25 @@ def get_processed_urls() -> set[str]:
     with get_session() as s:
         return set(
             s.scalars(select(ScheduleFile.url).where(ScheduleFile.processed.is_(True)))
+        )
+
+
+def get_urls_needing_recheck(minutes: int = 25) -> set[str]:
+    """Возвращает URL обработанных файлов, которые не проверялись более N минут."""
+    with get_session() as s:
+        threshold = datetime.now() - timedelta(minutes=minutes)
+        from sqlalchemy import or_
+        return set(
+            s.scalars(
+                select(ScheduleFile.url)
+                .where(
+                    ScheduleFile.processed.is_(True),
+                    or_(
+                        ScheduleFile.last_checked.is_(None),
+                        ScheduleFile.last_checked < threshold
+                    )
+                )
+            )
         )
 
 

@@ -70,6 +70,7 @@ async def _process_link(
         repo.upsert_file(
             title=link.title, url=link.url, file_type=link.file_type, faculty=faculty,
             schedule_date=link.schedule_date, processed=False, error=str(exc),
+            update_check_time=True,
         )
         report.errors.append(f"{link.title}: {exc}")
         logger.error("Файл не скачан (%s): %s", link.title, exc)
@@ -82,6 +83,7 @@ async def _process_link(
             schedule_date=link.schedule_date, file_hash=downloaded.sha256,
             local_path=str(downloaded.path), processed=True,
             error="Дубликат уже обработанного файла",
+            update_check_time=True,
         )
         report.skipped += 1
         return
@@ -90,6 +92,7 @@ async def _process_link(
         title=link.title, url=link.url, file_type=link.file_type, faculty=faculty,
         schedule_date=link.schedule_date, file_hash=downloaded.sha256,
         local_path=str(downloaded.path), processed=False,
+        update_check_time=True,
     )
 
     try:
@@ -100,6 +103,7 @@ async def _process_link(
             schedule_date=link.schedule_date, file_hash=downloaded.sha256,
             local_path=str(downloaded.path), processed=False,
             error=f"Ошибка разбора Excel: {exc}",
+            update_check_time=True,
         )
         report.errors.append(f"{link.title}: ошибка разбора Excel")
         logger.exception("Ошибка разбора файла %s", downloaded.path)
@@ -137,6 +141,7 @@ async def _process_link(
         title=link.title, url=link.url, file_type=link.file_type, faculty=faculty,
         schedule_date=link.schedule_date, file_hash=downloaded.sha256,
         local_path=str(downloaded.path), processed=bool(saved_groups), error=error,
+        update_check_time=True,
     )
     if not saved_groups:
         report.errors.append(f"{link.title}: группы не распознаны (нужна донастройка парсера)")
@@ -178,8 +183,12 @@ async def check_for_updates(
         return report
 
     known_urls = repo.get_processed_urls()
+    # URL файлов, которые давно не проверялись (>25 минут)
+    urls_needing_recheck = repo.get_urls_needing_recheck(minutes=25)
+    
     for faculty, link in links_with_faculty:
-        if link.url in known_urls and not force_reprocess:
+        # Пропускаем только если файл известен И не требует перепроверки И не force_reprocess
+        if link.url in known_urls and link.url not in urls_needing_recheck and not force_reprocess:
             report.skipped += 1
             continue
         try:

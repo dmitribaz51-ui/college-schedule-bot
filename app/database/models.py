@@ -42,6 +42,7 @@ class ScheduleFile(Base):
     file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     local_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     downloaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_checked: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     faculty: Mapped[str] = mapped_column(String(32), default="permskaya")
