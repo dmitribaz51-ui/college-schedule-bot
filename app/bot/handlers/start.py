@@ -100,6 +100,7 @@ async def back_to_faculties(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("faculty:"))
 async def choose_faculty(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем любое предыдущее состояние
     faculty = callback.data.split(":", 1)[1]
     await state.update_data(faculty=faculty)
     repo.set_user_faculty(callback.from_user.id, faculty)
@@ -109,6 +110,7 @@ async def choose_faculty(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("course:"))
 async def choose_course(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()  # Сбрасываем любое предыдущее состояние
     course = int(callback.data.split(":")[1])
     await state.update_data(course=course)
 
