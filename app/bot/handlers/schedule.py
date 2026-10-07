@@ -111,8 +111,17 @@ async def unknown_command(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(ScheduleStates.waiting_date)
+@router.message(
+    ScheduleStates.waiting_date,
+    ~F.text.in_([BTN_TODAY, BTN_TOMORROW, BTN_PICK_DATE, BTN_CHANGES])
+)
 async def show_by_date(message: Message, state: FSMContext) -> None:
+    from app.bot.keyboards.menu import BTN_GROUP, BTN_NOTIFICATIONS, BTN_INFO
+    
+    # Если это кнопка меню — игнорируем, пусть обработают другие хендлеры
+    if message.text in [BTN_GROUP, BTN_NOTIFICATIONS, BTN_INFO]:
+        return
+    
     day = parse_user_date(message.text or "")
     if day is None:
         await message.answer("Не понял дату 🤔 Пример: <code>10.09.2026</code>")

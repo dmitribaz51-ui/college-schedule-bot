@@ -42,8 +42,8 @@ async def main() -> None:
     dp.include_router(broadcast_history.router)
     dp.include_router(broadcast_drafts.router)
     dp.include_router(start.router)
-    dp.include_router(schedule.router)
-    dp.include_router(settings.router)
+    dp.include_router(settings.router)  # Переставлено: settings ПЕРЕД schedule
+    dp.include_router(schedule.router)  # schedule последним, т.к. содержит waiting_date (перехватывает весь текст)
 
     scheduler = setup_scheduler(bot)
     scheduler.start()
