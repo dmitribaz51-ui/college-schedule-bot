@@ -267,7 +267,12 @@ def replace_group_lessons(
             )
             for item in old_lessons
         ]
-        changed = old_signature != new_signature
+        # Сравниваем также faculty, чтобы избежать ложных срабатываний
+        old_faculty_set = {item.faculty for item in old_lessons} if old_lessons else set()
+        new_faculty = faculty
+        faculty_changed = (len(old_faculty_set) != 1 or new_faculty not in old_faculty_set) if old_lessons else False
+        
+        changed = old_signature != new_signature or faculty_changed
         # Удаляем ВСЕ старые записи для этой группы/даты/типа независимо от faculty
         # (иначе при смене faculty останутся дубли со старым значением)
         s.execute(
