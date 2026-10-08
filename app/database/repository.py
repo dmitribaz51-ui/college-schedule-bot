@@ -253,26 +253,58 @@ def replace_group_lessons(
                 .order_by(Lesson.lesson_number)
             )
         )
-        new_signature = [
-            (
-                item["number"], item.get("subject"), item.get("teacher"),
-                item.get("room"), item.get("notes"),
+        # Если в базе записей нет — это новое расписание
+        if not old_lessons:
+            logger.info(
+                "Новое расписание для %s на %s (source_type=%s): %d пар",
+                group_name, schedule_date, source_type, len(lessons)
             )
-            for item in lessons
-        ]
-        old_signature = [
-            (
-                item.lesson_number, item.subject, item.teacher,
-                item.room, item.notes,
-            )
-            for item in old_lessons
-        ]
-        # Сравниваем также faculty, чтобы избежать ложных срабатываний
-        old_faculty_set = {item.faculty for item in old_lessons} if old_lessons else set()
-        new_faculty = faculty
-        faculty_changed = (len(old_faculty_set) != 1 or new_faculty not in old_faculty_set) if old_lessons else False
-        
-        changed = old_signature != new_signature or faculty_changed
+            changed = True
+        else:
+            new_signature = [
+                (
+                    item["number"], item.get("subject"), item.get("teacher"),
+                    item.get("room"), item.get("notes"),
+                )
+                for item in lessons
+            ]
+            old_signature = [
+                (
+                    item.lesson_number, item.subject, item.teacher,
+                    item.room, item.notes,
+                )
+                for item in old_lessons
+            ]
+            # Сравниваем также faculty, чтобы избежать ложных срабатываний
+            old_faculty_set = {item.faculty for item in old_lessons}
+            new_faculty = faculty
+            faculty_changed = len(old_faculty_set) != 1 or new_faculty not in old_faculty_set
+            
+            content_changed = old_signature != new_signature
+            changed = content_changed or faculty_changed
+            
+            # Детальное логирование для отладки повторных уведомлений
+            if changed:
+                if content_changed:
+                    logger.info(
+                        "Изменения в расписании %s на %s (source_type=%s): содержание пар изменилось",
+                        group_name, schedule_date, source_type
+                    )
+                    # Показываем разницу только для первых 3 пар
+                    for i, (old, new) in enumerate(zip(old_signature[:3], new_signature[:3])):
+                        if old != new:
+                            logger.info("  Пара %d: БЫЛО %s", i+1, old)
+                            logger.info("  Пара %d: СТАЛО %s", i+1, new)
+                if faculty_changed:
+                    logger.info(
+                        "Изменения в расписании %s на %s (source_type=%s): faculty изменился (%s -> %s)",
+                        group_name, schedule_date, source_type, old_faculty_set, new_faculty
+                    )
+            else:
+                logger.debug(
+                    "Расписание %s на %s (source_type=%s) не изменилось, уведомление НЕ отправляется",
+                    group_name, schedule_date, source_type
+                )
         # Удаляем ВСЕ старые записи для этой группы/даты/типа независимо от faculty
         # (иначе при смене faculty останутся дубли со старым значением)
         s.execute(
