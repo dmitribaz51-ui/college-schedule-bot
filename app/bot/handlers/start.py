@@ -14,7 +14,7 @@ from app.bot.keyboards.menu import (
     courses_keyboard, faculties_keyboard, groups_keyboard, main_menu,
 )
 from app.database import repository as repo
-from app.utils import normalize_group
+from app.utils import detect_faculty, normalize_group
 
 logger = logging.getLogger(__name__)
 router = Router(name="start")
@@ -100,7 +100,6 @@ async def back_to_faculties(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("faculty:"))
 async def choose_faculty(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()  # Сбрасываем любое предыдущее состояние
     faculty = callback.data.split(":", 1)[1]
     await state.update_data(faculty=faculty)
     repo.set_user_faculty(callback.from_user.id, faculty)
@@ -110,12 +109,17 @@ async def choose_faculty(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("course:"))
 async def choose_course(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()  # Сбрасываем любое предыдущее состояние
     course = int(callback.data.split(":")[1])
     await state.update_data(course=course)
 
     data = await state.get_data()
-    groups = repo.get_groups(course, data.get("faculty", "permskaya"))
+    faculty = data.get("faculty")
+    if not faculty:
+        user = repo.get_user(callback.from_user.id)
+        faculty = user.faculty if user and user.faculty else "permskaya"
+        await state.update_data(faculty=faculty)
+
+    groups = repo.get_groups(course, faculty)
     if groups:
         await state.set_state(Registration.group)
         await callback.message.edit_text(
@@ -146,6 +150,8 @@ async def choose_group(callback: CallbackQuery, state: FSMContext) -> None:
     group = callback.data.split(":", 1)[1]
     data = await state.get_data()
     repo.set_user_group(callback.from_user.id, data.get("course"), group)
+    group_faculty = detect_faculty(group) or data.get("faculty", "permskaya")
+    repo.set_user_faculty(callback.from_user.id, group_faculty)
     await state.clear()
 
     await callback.message.edit_text(f"✅ Группа сохранена: <b>{group}</b>")
@@ -167,6 +173,8 @@ async def enter_group_manually(message: Message, state: FSMContext) -> None:
 
     data = await state.get_data()
     repo.set_user_group(message.from_user.id, data.get("course"), group)
+    group_faculty = detect_faculty(group) or data.get("faculty", "permskaya")
+    repo.set_user_faculty(message.from_user.id, group_faculty)
     await state.clear()
     await message.answer(
         f"✅ Группа сохранена: <b>{group}</b>", reply_markup=main_menu()
