@@ -488,13 +488,28 @@ def _parse_sheet(ws, default_date: date | None) -> list[GroupSchedule]:
     return list(result.values())
 
 
+def _sorted_by_number(schedules: list[GroupSchedule]) -> list[GroupSchedule]:
+    """Возвращает пары каждой группы в порядке номера пары.
+
+    Разбор идёт по строкам Excel, поэтому классный час середины дня (номер 90)
+    попадает в список между 3-й и 4-й парой: [3, 90, 4, 5]. Такое расписание
+    каждый раз сравнивалось с базой (а база отдаёт пары по lesson_number) и
+    выглядело как изменение — группам слали уведомления без причины.
+    Сортировка по номеру делает вывод парсера детерминированным и совпадающим
+    с порядком в БД.
+    """
+    for schedule in schedules:
+        schedule.lessons.sort(key=lambda lesson: lesson.number)
+    return schedules
+
+
 def parse_excel_file(
     path: str | Path, default_date: date | None = None
 ) -> list[GroupSchedule]:
     """Главная функция парсера: файл -> список расписаний по группам."""
     path = Path(path)
     if path.suffix.lower() == ".xls":
-        return _parse_xls_file(path, default_date)
+        return _sorted_by_number(_parse_xls_file(path, default_date))
     try:
         workbook = load_workbook(path, data_only=True)
     except Exception:
@@ -525,7 +540,7 @@ def parse_excel_file(
         workbook.close()
 
     logger.info("Файл %s: распознано групп — %s", path.name, len(merged))
-    return list(merged.values())
+    return _sorted_by_number(list(merged.values()))
 
 
 def _parse_xls_file(path: Path, default_date: date | None) -> list[GroupSchedule]:

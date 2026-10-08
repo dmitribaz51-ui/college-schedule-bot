@@ -261,29 +261,30 @@ def replace_group_lessons(
             )
             changed = True
         else:
-            new_signature = [
-                (
-                    item["number"], item.get("subject"), item.get("teacher"),
+            # Сравниваем как СПИСОК ПАР ПО НОМЕРАМ, а не позиционно: порядок
+            # пар во входных данных не должен влиять на результат. Раньше
+            # списки сравнивались как есть, и расписание с классным часом
+            # посередине ([3, 90, 4, 5]) всегда отличалось от базы, где пары
+            # лежат по lesson_number, — отсюда уведомления без изменений.
+            new_by_number = {
+                item["number"]: (
+                    item.get("subject"), item.get("teacher"),
                     item.get("room"), item.get("notes"),
                 )
                 for item in lessons
-            ]
-            old_signature = [
-                (
-                    item.lesson_number, item.subject, item.teacher,
-                    item.room, item.notes,
-                )
+            }
+            old_by_number = {
+                item.lesson_number: (item.subject, item.teacher, item.room, item.notes)
                 for item in old_lessons
-            ]
-            # Сравниваем также faculty, чтобы избежать ложных срабатываний
+            }
+            old_numbers = sorted(old_by_number)
+            new_numbers = sorted(new_by_number)
             old_faculty_set = {item.faculty for item in old_lessons}
-            new_faculty = faculty
-            faculty_changed = len(old_faculty_set) != 1 or new_faculty not in old_faculty_set
-            
-            content_changed = old_signature != new_signature
+            faculty_changed = old_faculty_set != {faculty}
+
+            content_changed = old_by_number != new_by_number
             changed = content_changed or faculty_changed
-            
-            # Детальное логирование для отладки повторных уведомлений
+
             if changed:
                 if content_changed:
                     logger.info(
@@ -291,14 +292,24 @@ def replace_group_lessons(
                         group_name, schedule_date, source_type
                     )
                     # Показываем разницу только для первых 3 пар
-                    for i, (old, new) in enumerate(zip(old_signature[:3], new_signature[:3])):
-                        if old != new:
-                            logger.info("  Пара %d: БЫЛО %s", i+1, old)
-                            logger.info("  Пара %d: СТАЛО %s", i+1, new)
+                    shown = 0
+                    for number in sorted(set(old_numbers) | set(new_numbers)):
+                        old = old_by_number.get(number)
+                        new = new_by_number.get(number)
+                        if old == new or shown >= 3:
+                            continue
+                        logger.info("  Пара %s: БЫЛО %s", number, old)
+                        logger.info("  Пара %s: СТАЛО %s", number, new)
+                        shown += 1
+                    if len(old_numbers) != len(new_numbers):
+                        logger.info(
+                            "  Количество пар: БЫЛО %d, СТАЛО %d",
+                            len(old_numbers), len(new_numbers),
+                        )
                 if faculty_changed:
                     logger.info(
                         "Изменения в расписании %s на %s (source_type=%s): faculty изменился (%s -> %s)",
-                        group_name, schedule_date, source_type, old_faculty_set, new_faculty
+                        group_name, schedule_date, source_type, old_faculty_set, faculty
                     )
             else:
                 logger.debug(
