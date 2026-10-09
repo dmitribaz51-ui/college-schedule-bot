@@ -26,7 +26,7 @@ def test_existing_subject_is_split_for_display() -> None:
                     room="201а", lesson_number=4, source_type="changes")
     with patch.object(schedule_service.repo, "get_lessons", return_value=[lesson]):
         text = schedule_service.format_day_schedule("ТД-24-9", date(2026, 9, 14))
-    assert "исследований</b>\nАгаджанян ДС/201а🚪" in text
+    assert "исследований</b>\nАгаджанян ДС/⁠201а🚪" in text
     assert lesson.subject.endswith("Агаджанян ДС")
 
 
@@ -60,7 +60,7 @@ def test_class_hour_is_not_first_pair() -> None:
             patch.object(schedule_service, "get_class_hour_range",
                          return_value=("14:10", "14:45")):
         text = schedule_service.format_day_schedule("ТД-24-9", date(2026, 9, 14))
-    assert "🕒 <code>14:10-14:45</code> <b>Классный час</b>\nБурунова НВ/202а🚪" in text
+    assert "🕒 <code>14:10-14:45</code> <b>Классный час</b>\nБурунова НВ/⁠202а🚪" in text
     assert "09:15" not in text
 
 
