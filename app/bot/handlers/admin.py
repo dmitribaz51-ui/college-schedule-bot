@@ -220,7 +220,7 @@ async def admin_search_user(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(AdminStates.waiting_username)
     await callback.message.answer(
-        "🔍 Введите username для поиска (с @ или без):"
+        "🔍 Введите username (с @ или без) или Telegram ID:"
     )
 
 
@@ -230,12 +230,15 @@ async def process_username_search(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     
-    username = (message.text or "").strip()
-    if not username:
-        await message.answer("Вы не ввели username.")
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("Вы не ввели username или ID.")
         return
-    
-    user = repo.find_user_by_username(username)
+
+    if query.lstrip("@").isdigit():
+        user = repo.get_user(int(query.lstrip("@")))
+    else:
+        user = repo.find_user_by_username(query)
     if user is None:
         await message.answer("Пользователь не найден.")
         return
