@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.menu import (
     BTN_CHANGES, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW, main_menu,
@@ -45,13 +46,30 @@ async def _require_group(message: Message) -> str | None:
     return selected
 
 
+async def _send_schedule(message: Message, group: str, day, faculty: str, course: int | None) -> None:
+    """Отправляет расписание с прикрепленным файлом, если он есть."""
+    schedule_text = format_day_schedule(group, day, faculty, course)
+
+    # Сначала текст расписания, затем отдельным сообщением файл под ним.
+    await message.answer(schedule_text)
+    schedule_file = repo.get_schedule_file_for_date(day, faculty)
+
+    if schedule_file and schedule_file.local_path:
+        file_path = Path(schedule_file.local_path)
+        if file_path.exists():
+            try:
+                await message.answer_document(document=FSInputFile(file_path))
+            except Exception as e:
+                logger.warning(f"Не удалось отправить файл {file_path}: {e}")
+
+
 @router.message(F.text == BTN_TODAY)
 @router.message(Command("today"))
 async def show_today(message: Message, state: FSMContext) -> None:
     await state.clear()  # Сбрасываем режим выбора даты
     group = await _require_group(message)
     if group:
-        await message.answer(format_day_schedule(group[0], today_perm(), group[1], group[2]))
+        await _send_schedule(message, group[0], today_perm(), group[1], group[2])
 
 
 @router.message(F.text == BTN_TOMORROW)
@@ -60,7 +78,7 @@ async def show_tomorrow(message: Message, state: FSMContext) -> None:
     await state.clear()  # Сбрасываем режим выбора даты
     group = await _require_group(message)
     if group:
-        await message.answer(format_day_schedule(group[0], tomorrow_perm(), group[1], group[2]))
+        await _send_schedule(message, group[0], tomorrow_perm(), group[1], group[2])
 
 
 @router.message(Command("date"))
@@ -117,11 +135,11 @@ async def unknown_command(message: Message, state: FSMContext) -> None:
 )
 async def show_by_date(message: Message, state: FSMContext) -> None:
     from app.bot.keyboards.menu import BTN_GROUP, BTN_NOTIFICATIONS, BTN_INFO
-    
+
     # Если это кнопка меню — игнорируем, пусть обработают другие хендлеры
     if message.text in [BTN_GROUP, BTN_NOTIFICATIONS, BTN_INFO]:
         return
-    
+
     day = parse_user_date(message.text or "")
     if day is None:
         await message.answer("Не понял дату 🤔 Пример: <code>10.09.2026</code>")
@@ -129,13 +147,13 @@ async def show_by_date(message: Message, state: FSMContext) -> None:
     await state.clear()
     group = await _require_group(message)
     if group:
-        await message.answer(format_day_schedule(group[0], day, group[1], group[2]))
+        await _send_schedule(message, group[0], day, group[1], group[2])
 
 
 @router.callback_query(F.data.startswith("pickdate:"))
 async def pick_date(callback: CallbackQuery, state: FSMContext) -> None:
     from datetime import date as date_type
-    
+
     raw = (callback.data or "").removeprefix("pickdate:")
     try:
         day = date_type.fromisoformat(raw)
@@ -152,6 +170,4 @@ async def pick_date(callback: CallbackQuery, state: FSMContext) -> None:
 
     await callback.answer()  # закрыть «часики» Telegram
     if callback.message is not None:
-        await callback.message.answer(
-            format_day_schedule(selected[0], day, selected[1], selected[2])
-        )
+        await _send_schedule(callback.message, selected[0], day, selected[1], selected[2])

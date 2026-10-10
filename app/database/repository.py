@@ -409,3 +409,19 @@ def available_dates(group_name: str, limit: int = 7, faculty: str = "permskaya")
                 .limit(limit)
             )
         )
+
+
+def get_schedule_file_for_date(schedule_date: date, faculty: str = "permskaya") -> ScheduleFile | None:
+    """Возвращает файл расписания для указанной даты и факультета."""
+    with get_session() as s:
+        return s.scalar(
+            select(ScheduleFile)
+            .where(
+                ScheduleFile.schedule_date == schedule_date,
+                ScheduleFile.faculty == faculty,
+                ScheduleFile.file_type == "schedule",
+                ScheduleFile.processed.is_(True),
+                ScheduleFile.local_path.is_not(None),
+            )
+            .order_by(ScheduleFile.id.desc())
+        )
