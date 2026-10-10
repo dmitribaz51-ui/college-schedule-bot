@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from html.parser import HTMLParser
 from pathlib import Path
 
 from aiogram import F, Router
@@ -46,21 +47,85 @@ async def _require_group(message: Message) -> str | None:
     return selected
 
 
-async def _send_schedule(message: Message, group: str, day, faculty: str, course: int | None) -> None:
-    """Отправляет расписание с прикрепленным файлом, если он есть."""
-    schedule_text = format_day_schedule(group, day, faculty, course)
+TELEGRAM_CAPTION_LIMIT = 1024
+TELEGRAM_TEXT_LIMIT = 4096
 
-    # Сначала текст расписания, затем отдельным сообщением файл под ним.
-    await message.answer(schedule_text)
+
+class _ScheduleTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def _plain_schedule_text(text: str) -> str:
+    parser = _ScheduleTextParser()
+    parser.feed(text)
+    return "".join(parser.parts)
+
+
+def _telegram_length(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+async def _send_schedule_text(message: Message, text: str) -> None:
+    plain = _plain_schedule_text(text)
+    if _telegram_length(plain) <= TELEGRAM_TEXT_LIMIT:
+        await message.answer(text)
+        return
+
+    # В редком случае очень длинного расписания сохраняем весь текст,
+    # разбивая его без HTML, чтобы не разорвать теги форматирования.
+    chunk: list[str] = []
+    size = 0
+    for char in plain:
+        char_size = _telegram_length(char)
+        if size + char_size > TELEGRAM_TEXT_LIMIT:
+            await message.answer("".join(chunk), parse_mode=None)
+            chunk = []
+            size = 0
+        chunk.append(char)
+        size += char_size
+    if chunk:
+        await message.answer("".join(chunk), parse_mode=None)
+
+
+async def _send_schedule(message: Message, group: str, day, faculty: str, course: int | None) -> None:
+    """Отправляет расписание и исходный файл, не обрезая текст."""
+    schedule_text = format_day_schedule(group, day, faculty, course)
     schedule_file = repo.get_schedule_file_for_date(day, faculty)
 
     if schedule_file and schedule_file.local_path:
         file_path = Path(schedule_file.local_path)
         if file_path.exists():
+            # В коротком расписании документ и весь текст помещаются в одно сообщение.
+            if _telegram_length(_plain_schedule_text(schedule_text)) <= TELEGRAM_CAPTION_LIMIT:
+                try:
+                    await message.answer_document(
+                        document=FSInputFile(file_path),
+                        caption=schedule_text,
+                    )
+                    return
+                except Exception as e:
+                    logger.warning(
+                        "Не удалось отправить расписание вместе с файлом %s: %s",
+                        file_path,
+                        e,
+                    )
+
+            # Длинный текст нельзя помещать в Telegram caption: сначала отправляем
+            # расписание целиком, затем файл отдельным сообщением.
+            await _send_schedule_text(message, schedule_text)
             try:
                 await message.answer_document(document=FSInputFile(file_path))
             except Exception as e:
-                logger.warning(f"Не удалось отправить файл {file_path}: {e}")
+                logger.warning("Не удалось отправить файл %s: %s", file_path, e)
+            return
+
+    # Если файла нет, отправляем расписание как обычно.
+    await _send_schedule_text(message, schedule_text)
 
 
 @router.message(F.text == BTN_TODAY)
