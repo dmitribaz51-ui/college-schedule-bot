@@ -45,6 +45,13 @@ def init_db(database_url: str) -> None:
                     "ADD COLUMN last_checked DATETIME"
                 )
             )
+        if "telegram_file_id" not in schedule_file_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE schedule_files "
+                    "ADD COLUMN telegram_file_id VARCHAR(255)"
+                )
+            )
     logger.info("База данных готова: %s", database_url)
 
 

@@ -93,20 +93,55 @@ async def _send_schedule_text(message: Message, text: str) -> None:
 
 
 async def _send_schedule(message: Message, group: str, day, faculty: str, course: int | None) -> None:
-    """Отправляет расписание и исходный файл, не обрезая текст."""
+    """Отправляет расписание и актуальный исходный файл (с кэшированием Telegram file_id), не обрезая текст."""
     schedule_text = format_day_schedule(group, day, faculty, course)
-    schedule_file = repo.get_schedule_file_for_date(day, faculty)
+    schedule_file = repo.get_schedule_file_for_group(day, group, faculty)
 
     if schedule_file and schedule_file.local_path:
         file_path = Path(schedule_file.local_path)
         if file_path.exists():
+            # Если есть сохранённый telegram_file_id, отправляем по нему без повторной загрузки.
+            cached_file_id = schedule_file.telegram_file_id
+            doc_to_send = cached_file_id or FSInputFile(file_path)
+
+            async def _send_doc(caption: str | None = None) -> Message | None:
+                nonlocal cached_file_id, doc_to_send
+                try:
+                    sent = await message.answer_document(
+                        document=doc_to_send,
+                        caption=caption,
+                    )
+                    # Если отправляли новый файл с диска и получили file_id — сохраняем в кэш
+                    if sent and sent.document and not cached_file_id:
+                        repo.set_file_telegram_id(schedule_file.id, sent.document.file_id)
+                        cached_file_id = sent.document.file_id
+                    return sent
+                except Exception as e:
+                    # Если отправка по кэшированному file_id упала — пробуем отправить файл с диска
+                    if cached_file_id:
+                        logger.warning(
+                            "Не удалось отправить по cached file_id %s, пробуем FSInputFile: %s",
+                            cached_file_id, e
+                        )
+                        doc_to_send = FSInputFile(file_path)
+                        try:
+                            sent = await message.answer_document(
+                                document=doc_to_send,
+                                caption=caption,
+                            )
+                            if sent and sent.document:
+                                repo.set_file_telegram_id(schedule_file.id, sent.document.file_id)
+                                cached_file_id = sent.document.file_id
+                            return sent
+                        except Exception as e2:
+                            logger.warning("Повторная отправка с диска также не удалась: %s", e2)
+                            raise e2
+                    raise e
+
             # В коротком расписании документ и весь текст помещаются в одно сообщение.
             if _telegram_length(_plain_schedule_text(schedule_text)) <= TELEGRAM_CAPTION_LIMIT:
                 try:
-                    await message.answer_document(
-                        document=FSInputFile(file_path),
-                        caption=schedule_text,
-                    )
+                    await _send_doc(caption=schedule_text)
                     return
                 except Exception as e:
                     logger.warning(
@@ -119,7 +154,7 @@ async def _send_schedule(message: Message, group: str, day, faculty: str, course
             # расписание целиком, затем файл отдельным сообщением.
             await _send_schedule_text(message, schedule_text)
             try:
-                await message.answer_document(document=FSInputFile(file_path))
+                await _send_doc(caption=None)
             except Exception as e:
                 logger.warning("Не удалось отправить файл %s: %s", file_path, e)
             return

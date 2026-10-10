@@ -46,6 +46,7 @@ class ScheduleFile(Base):
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     faculty: Mapped[str] = mapped_column(String(32), default="permskaya")
+    telegram_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

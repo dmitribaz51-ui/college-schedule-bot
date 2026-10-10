@@ -176,6 +176,9 @@ def upsert_file(
         record.faculty = faculty
         record.schedule_date = schedule_date
         if file_hash:
+            if record.file_hash and record.file_hash != file_hash:
+                # Содержимое файла изменилось — сбрасываем кэшированный file_id Телеграма
+                record.telegram_file_id = None
             record.file_hash = file_hash
         if local_path:
             record.local_path = local_path
@@ -425,3 +428,89 @@ def get_schedule_file_for_date(schedule_date: date, faculty: str = "permskaya") 
             )
             .order_by(ScheduleFile.id.desc())
         )
+
+
+def get_file_by_id(file_id: int) -> ScheduleFile | None:
+    with get_session() as s:
+        return s.get(ScheduleFile, file_id)
+
+
+def set_file_telegram_id(file_id: int, telegram_file_id: str | None) -> None:
+    with get_session() as s:
+        record = s.get(ScheduleFile, file_id)
+        if record:
+            record.telegram_file_id = telegram_file_id
+
+
+def get_schedule_file_for_group(
+    schedule_date: date,
+    group_name: str,
+    faculty: str = "permskaya",
+) -> ScheduleFile | None:
+    """Находит актуальный файл расписания или изменений для конкретной группы.
+
+    Приоритет:
+    1. Исходный файл уроков из изменений группы (source_type == 'changes')
+    2. Исходный файл базовых уроков группы (source_type == 'schedule')
+    3. Файл изменений дня для факультета
+    4. Базовый файл расписания дня для факультета
+    """
+    with get_session() as s:
+        lessons = list(
+            s.scalars(
+                select(Lesson)
+                .where(
+                    Lesson.schedule_date == schedule_date,
+                    Lesson.group_name == group_name,
+                    Lesson.faculty == faculty,
+                )
+            )
+        )
+        if lessons:
+            changes_file_ids = [
+                l.source_file_id for l in lessons
+                if l.source_type == "changes" and l.source_file_id
+            ]
+            if changes_file_ids:
+                file_rec = s.get(ScheduleFile, changes_file_ids[0])
+                if file_rec and file_rec.local_path:
+                    return file_rec
+
+            schedule_file_ids = [
+                l.source_file_id for l in lessons
+                if l.source_type == "schedule" and l.source_file_id
+            ]
+            if schedule_file_ids:
+                file_rec = s.get(ScheduleFile, schedule_file_ids[0])
+                if file_rec and file_rec.local_path:
+                    return file_rec
+
+        # Если пар нет или у них нет source_file_id — смотрим общие файлы дня
+        # Сначала проверяем файл изменений
+        changes_file = s.scalar(
+            select(ScheduleFile)
+            .where(
+                ScheduleFile.schedule_date == schedule_date,
+                ScheduleFile.faculty == faculty,
+                ScheduleFile.file_type == "changes",
+                ScheduleFile.processed.is_(True),
+                ScheduleFile.local_path.is_not(None),
+            )
+            .order_by(ScheduleFile.id.desc())
+        )
+        if changes_file:
+            return changes_file
+
+        # Иначе базовый файл расписания
+        return s.scalar(
+            select(ScheduleFile)
+            .where(
+                ScheduleFile.schedule_date == schedule_date,
+                ScheduleFile.faculty == faculty,
+                ScheduleFile.file_type == "schedule",
+                ScheduleFile.processed.is_(True),
+                ScheduleFile.local_path.is_not(None),
+            )
+            .order_by(ScheduleFile.id.desc())
+        )
+
