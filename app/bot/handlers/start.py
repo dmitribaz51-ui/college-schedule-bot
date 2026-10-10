@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.menu import (
     BTN_CHANGES, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW,
@@ -57,7 +58,13 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if user.group_name:
         greeting += f"\n\nТекущая группа: <b>{user.group_name}</b>"
 
-    await message.answer(greeting)
+    image_path = Path(__file__).parent.parent.parent.parent / "assets" / "images" / "start_image.jpg"
+    if image_path.exists():
+        photo = FSInputFile(image_path)
+        await message.answer_photo(photo=photo, caption=greeting)
+    else:
+        await message.answer(greeting)
+
     await ask_faculty(message, state)
 
 
