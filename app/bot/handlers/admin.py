@@ -21,6 +21,7 @@ router = Router(name="admin")
 
 class AdminStates(StatesGroup):
     waiting_username = State()
+    waiting_group = State()
 
 GROUPS_PAGE_SIZE = 25
 TEXT_LIMIT = 3500
@@ -60,6 +61,7 @@ def _groups_keyboard(
         nav.append(InlineKeyboardButton(text="▶️", callback_data=f"admin:glist:{page + 1}"))
     if nav:
         buttons.append(nav)
+    buttons.append([InlineKeyboardButton(text="🔍 Поиск группы", callback_data="admin:search_group")])
     buttons.append([InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="admin:panel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -206,6 +208,90 @@ async def admin_group_detail(callback: CallbackQuery) -> None:
     chunks = _split_text("\n".join(lines))
     back = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⬅️ К группам", callback_data=f"admin:glist:{page}")
+    ]])
+    await message.edit_text(chunks[0], reply_markup=back, parse_mode="HTML")
+    for chunk in chunks[1:]:
+        await message.answer(chunk, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin:search_group")
+async def admin_search_group(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_group)
+    await callback.message.answer(
+        "🔍 Введите название группы (или её часть):"
+    )
+
+
+@router.message(AdminStates.waiting_group)
+async def process_group_search(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    await state.clear()
+
+    query = (message.text or "").strip().upper()
+    if not query:
+        await message.answer("Вы не ввели название группы.")
+        return
+
+    all_groups = repo.users_by_group()
+    found = [g for g in all_groups if query in g[0].upper()]
+
+    if not found:
+        await message.answer(f"Группа с названием <b>{escape(query)}</b> не найдена.", parse_mode="HTML")
+        return
+
+    if len(found) == 1:
+        group_name, _ = found[0]
+        users = repo.get_users_by_groups([group_name], only_enabled=False)
+        lines = [f"<b>• {escape(group_name)}: {len(users)}</b>", ""]
+        for user in sorted(users, key=lambda item: item.telegram_id):
+            label = f"@{escape(user.username)}" if user.username else str(user.telegram_id)
+            lines.append(f"    {label}")
+        chunks = _split_text("\n".join(lines))
+        back = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ К группам", callback_data="admin:groups")
+        ]])
+        await message.answer(chunks[0], reply_markup=back, parse_mode="HTML")
+        for chunk in chunks[1:]:
+            await message.answer(chunk, parse_mode="HTML")
+    else:
+        lines = [f"🔍 Найдено групп: <b>{len(found)}</b>", ""]
+        buttons = []
+        for group_name, count in found[:20]:
+            lines.append(f"• {escape(group_name)} — {count}")
+            buttons.append([InlineKeyboardButton(
+                text=f"{group_name} — {count}",
+                callback_data=f"admin:gsearch:{group_name}"
+            )])
+        buttons.append([InlineKeyboardButton(text="⬅️ К группам", callback_data="admin:groups")])
+        await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("admin:gsearch:"))
+async def admin_group_from_search(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    message = _require_message(callback)
+    if message is None:
+        await callback.answer("Откройте /admin заново", show_alert=True)
+        return
+
+    group_name = (callback.data or "").removeprefix("admin:gsearch:")
+    await callback.answer()
+
+    users = repo.get_users_by_groups([group_name], only_enabled=False)
+    lines = [f"<b>• {escape(group_name)}: {len(users)}</b>", ""]
+    for user in sorted(users, key=lambda item: item.telegram_id):
+        label = f"@{escape(user.username)}" if user.username else str(user.telegram_id)
+        lines.append(f"    {label}")
+    chunks = _split_text("\n".join(lines))
+    back = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ К группам", callback_data="admin:groups")
     ]])
     await message.edit_text(chunks[0], reply_markup=back, parse_mode="HTML")
     for chunk in chunks[1:]:
