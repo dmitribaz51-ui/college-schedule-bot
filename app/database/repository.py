@@ -245,19 +245,30 @@ def replace_group_lessons(
 ) -> tuple[int, bool]:
     """Заменяет расписание группы на конкретную дату (без дублей)."""
     with get_session() as s:
-        old_lessons = list(
+        # Для определения changed: сравниваем с ЛЮБЫМ источником (schedule/changes)
+        # Раньше запрос фильтровал WHERE source_type == source_type, и файл изменений
+        # сравнивался только с предыдущим файлом изменений, а не с базовым расписанием.
+        # Результат: идентичный файл изменений считался "новым" → ложные уведомления.
+        old_lessons_for_comparison = list(
             s.scalars(
                 select(Lesson)
                 .where(
                     Lesson.schedule_date == schedule_date,
                     Lesson.group_name == group_name,
-                    Lesson.source_type == source_type,
                 )
                 .order_by(Lesson.lesson_number)
             )
         )
-        # Если в базе записей нет — это новое расписание
-        if not old_lessons:
+        # Как и при показе расписания, changes имеет приоритет над schedule.
+        # Первый changes-файл сравнивается с базовым расписанием этой группы.
+        existing_changes = [
+            item for item in old_lessons_for_comparison
+            if item.source_type == "changes"
+        ]
+        comparison_lessons = existing_changes or old_lessons_for_comparison
+        # Базовый файл не меняет отображаемые пары, пока есть changes-файл.
+        base_is_hidden = source_type == "schedule" and bool(existing_changes)
+        if not comparison_lessons:
             logger.info(
                 "Новое расписание для %s на %s (source_type=%s): %d пар",
                 group_name, schedule_date, source_type, len(lessons)
@@ -278,13 +289,17 @@ def replace_group_lessons(
             }
             old_by_number = {
                 item.lesson_number: (item.subject, item.teacher, item.room, item.notes)
-                for item in old_lessons
+                for item in comparison_lessons
             }
             old_numbers = sorted(old_by_number)
             new_numbers = sorted(new_by_number)
-            old_faculty_set = {item.faculty for item in old_lessons}
+            old_faculty_set = {item.faculty for item in comparison_lessons}
             faculty_changed = old_faculty_set != {faculty}
 
+            if base_is_hidden:
+                new_by_number = dict(old_by_number)
+                new_numbers = sorted(new_by_number)
+                faculty_changed = False
             content_changed = old_by_number != new_by_number
             changed = content_changed or faculty_changed
 

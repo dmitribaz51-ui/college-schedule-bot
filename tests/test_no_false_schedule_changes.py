@@ -55,6 +55,39 @@ def test_order_of_pairs_does_not_matter(memory_db):
     assert changed is False
 
 
+def test_identical_changes_file_is_not_a_change(memory_db):
+    """Первый changes-файл с теми же парами, что и schedule, не меняет их."""
+    _save(LESSONS)
+    _, changed = repo.replace_group_lessons(
+        schedule_date=DAY, group_name=GROUP, source_type="changes", course=1,
+        lessons=LESSONS, source_file_id=2, faculty="chernyshevskogo",
+    )
+    assert changed is False
+
+
+def test_base_recheck_does_not_override_changes(memory_db):
+    _save(LESSONS)
+    edited = [dict(item) for item in LESSONS]
+    edited[0]["room"] = "999"
+    args = dict(
+        schedule_date=DAY, group_name=GROUP, source_type="changes", course=1,
+        lessons=edited, source_file_id=2, faculty="chernyshevskogo",
+    )
+    assert repo.replace_group_lessons(**args)[1] is True
+    assert _save(LESSONS)[1] is False
+    assert repo.replace_group_lessons(**args)[1] is False
+    args["lessons"] = LESSONS
+    assert repo.replace_group_lessons(**args)[1] is True
+
+
+def test_removed_pair_in_first_changes_file_is_detected(memory_db):
+    _save(LESSONS)
+    assert repo.replace_group_lessons(
+        schedule_date=DAY, group_name=GROUP, source_type="changes", course=1,
+        lessons=LESSONS[:-1], source_file_id=2, faculty="chernyshevskogo",
+    )[1] is True
+
+
 def test_real_change_is_detected(memory_db):
     """Смена кабинета, предмета и добавление пары — настоящие изменения."""
     _save(LESSONS)
