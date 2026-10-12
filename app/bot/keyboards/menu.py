@@ -11,7 +11,7 @@ from aiogram.types import (
 BTN_TODAY = "📍 Сегодня"
 BTN_TOMORROW = "📆 Завтра"
 BTN_PICK_DATE = "📅 Выбрать дату"
-BTN_CHANGES = "⚠️ Последние изменения"
+BTN_BELLS = "Звонки⏰"
 BTN_GROUP = "⚙️ Моя группа"
 BTN_NOTIFICATIONS = "🔔 Уведомления"
 BTN_INFO = "ℹ️ Информация"
@@ -21,7 +21,7 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_TODAY), KeyboardButton(text=BTN_TOMORROW)],
-            [KeyboardButton(text=BTN_PICK_DATE), KeyboardButton(text=BTN_CHANGES)],
+            [KeyboardButton(text=BTN_PICK_DATE), KeyboardButton(text=BTN_BELLS)],
             [KeyboardButton(text=BTN_GROUP), KeyboardButton(text=BTN_NOTIFICATIONS)],
             [KeyboardButton(text=BTN_INFO)],
         ],
@@ -92,6 +92,46 @@ def admin_keyboard() -> InlineKeyboardMarkup:
 WEEKDAY_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
 
+def bells_keyboard(faculty: str = "permskaya", course: int | None = None) -> InlineKeyboardMarkup:
+    """Клавиатура выбора дня для звонков с учётом факультета."""
+    if faculty == "chernyshevskogo":
+        # Если курс известен (1 или 2-4), показываем сразу дни для этого курса
+        if course == 1:
+            rows = [
+                [InlineKeyboardButton(text="🗓 Понедельник", callback_data="bells:chern_mon_1")],
+                [InlineKeyboardButton(text="🗓 Вторник – Пятница", callback_data="bells:chern_week_1")],
+                [InlineKeyboardButton(text="❌ Закрыть", callback_data="bells:close")],
+            ]
+        elif course in (2, 3, 4):
+            rows = [
+                [InlineKeyboardButton(text="🗓 Понедельник", callback_data="bells:chern_mon_24")],
+                [InlineKeyboardButton(text="🗓 Вторник – Пятница", callback_data="bells:chern_week_24")],
+                [InlineKeyboardButton(text="❌ Закрыть", callback_data="bells:close")],
+            ]
+        else:
+            # Курс неизвестен: предлагаем выбрать курс
+            rows = [
+                [
+                    InlineKeyboardButton(text="1 курс (Пн)", callback_data="bells:chern_mon_1"),
+                    InlineKeyboardButton(text="1 курс (Вт-Пт)", callback_data="bells:chern_week_1"),
+                ],
+                [
+                    InlineKeyboardButton(text="2-4 курс (Пн)", callback_data="bells:chern_mon_24"),
+                    InlineKeyboardButton(text="2-4 курс (Вт-Пт)", callback_data="bells:chern_week_24"),
+                ],
+                [InlineKeyboardButton(text="❌ Закрыть", callback_data="bells:close")],
+            ]
+    else:
+        # Пермская
+        rows = [
+            [InlineKeyboardButton(text="🗓 Понедельник", callback_data="bells:perm_mon")],
+            [InlineKeyboardButton(text="🗓 Вторник – Пятница", callback_data="bells:perm_week")],
+            [InlineKeyboardButton(text="🗓 Суббота", callback_data="bells:perm_sat")],
+            [InlineKeyboardButton(text="❌ Закрыть", callback_data="bells:close")],
+        ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def pick_date_keyboard(dates: list[date]) -> InlineKeyboardMarkup | None:
     """Один ряд до 3 кнопок свежих дат. None — если дат нет."""
     if not dates:
@@ -104,3 +144,16 @@ def pick_date_keyboard(dates: list[date]) -> InlineKeyboardMarkup | None:
         for d in dates[:3]
     ]
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
+def bells_back_keyboard() -> InlineKeyboardMarkup:
+    """Кнопка возврата к выбору дня."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад к выбору дня", callback_data="bells:back")],
+            [InlineKeyboardButton(text="❌ Закрыть", callback_data="bells:close")],
+        ]
+    )
+
+
+

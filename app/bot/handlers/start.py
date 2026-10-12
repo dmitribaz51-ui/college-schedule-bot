@@ -11,9 +11,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.menu import (
-    BTN_CHANGES, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW,
+    BTN_BELLS, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW,
     courses_keyboard, faculties_keyboard, groups_keyboard, main_menu,
 )
+from app.bot.handlers.bells import cleanup_bells_message
 from app.database import repository as repo
 from app.utils import detect_faculty, normalize_group
 
@@ -41,6 +42,7 @@ async def ask_faculty(message: Message, state: FSMContext) -> None:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
+    await cleanup_bells_message(message, state)
     await state.clear()
     user = repo.get_or_create_user(
         telegram_id=message.from_user.id,
@@ -77,7 +79,7 @@ HELP_TEXT = (
     f"• {BTN_TOMORROW} — /tomorrow — расписание на завтра\n"
     f"• {BTN_PICK_DATE} — /date — расписание на любой день: нажмите кнопку "
     "с датой или введите её текстом, например <code>10.09.2026</code>\n"
-    f"• {BTN_CHANGES} — /changes — последние опубликованные изменения\n\n"
+    f"• {BTN_BELLS} — /bells — звонки по дням недели для вашего факультета\n\n"
     "<b>Также:</b> /start — сменить группу, /help — эта справка.\n\n"
     "Если меню пропало — отправьте /start."
 )
@@ -86,6 +88,7 @@ HELP_TEXT = (
 @router.message(Command("help"))
 async def cmd_help(message: Message, state: FSMContext) -> None:
     """Справка по боту; заодно выводит из режима выбора даты."""
+    await cleanup_bells_message(message, state)
     await state.clear()
     await message.answer(HELP_TEXT, reply_markup=main_menu())
 

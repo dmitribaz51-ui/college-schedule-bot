@@ -11,8 +11,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
+from app.bot.handlers.bells import cleanup_bells_message
 from app.bot.keyboards.menu import (
-    BTN_CHANGES, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW, main_menu,
+    BTN_BELLS, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW, main_menu,
     pick_date_keyboard,
 )
 from app.database import repository as repo
@@ -166,6 +167,7 @@ async def _send_schedule(message: Message, group: str, day, faculty: str, course
 @router.message(F.text == BTN_TODAY)
 @router.message(Command("today"))
 async def show_today(message: Message, state: FSMContext) -> None:
+    await cleanup_bells_message(message, state)
     await state.clear()  # Сбрасываем режим выбора даты
     group = await _require_group(message)
     if group:
@@ -175,6 +177,7 @@ async def show_today(message: Message, state: FSMContext) -> None:
 @router.message(F.text == BTN_TOMORROW)
 @router.message(Command("tomorrow"))
 async def show_tomorrow(message: Message, state: FSMContext) -> None:
+    await cleanup_bells_message(message, state)
     await state.clear()  # Сбрасываем режим выбора даты
     group = await _require_group(message)
     if group:
@@ -184,19 +187,26 @@ async def show_tomorrow(message: Message, state: FSMContext) -> None:
 @router.message(Command("date"))
 async def cmd_pick_date(message: Message, state: FSMContext) -> None:
     """Командный shortcut кнопки «Выбрать дату»."""
+    await cleanup_bells_message(message, state)
     await ask_date(message, state)
 
 
 @router.message(Command("changes"))
 async def cmd_changes(message: Message, state: FSMContext) -> None:
-    """Командный shortcut кнопки «Последние изменения»."""
-    await state.clear()  # Сбрасываем режим выбора даты
+    """Последние файлы изменений — только для админа (студентам недоступно)."""
+    from app.bot.handlers.broadcast_common import is_admin
+
+    if not is_admin(message.from_user.id):
+        return  # для студентов команды не существует
+    await cleanup_bells_message(message, state)
+    await state.clear()
     selected = _user_group(message.from_user.id)
     await message.answer(format_recent_changes(selected[0] if selected else None))
 
 
 @router.message(F.text == BTN_PICK_DATE)
 async def ask_date(message: Message, state: FSMContext) -> None:
+    await cleanup_bells_message(message, state)
     group = await _require_group(message)
     if not group:
         return
@@ -212,13 +222,6 @@ async def ask_date(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text == BTN_CHANGES)
-async def show_changes(message: Message, state: FSMContext) -> None:
-    await state.clear()  # Сбрасываем режим выбора даты
-    selected = _user_group(message.from_user.id)
-    await message.answer(format_recent_changes(selected[0] if selected else None))
-
-
 @router.message(F.text.startswith("/"))
 async def unknown_command(message: Message, state: FSMContext) -> None:
     """Неизвестная команда: выходит из режима выбора даты, датой не считается."""
@@ -231,7 +234,7 @@ async def unknown_command(message: Message, state: FSMContext) -> None:
 
 @router.message(
     ScheduleStates.waiting_date,
-    ~F.text.in_([BTN_TODAY, BTN_TOMORROW, BTN_PICK_DATE, BTN_CHANGES])
+    ~F.text.in_([BTN_TODAY, BTN_TOMORROW, BTN_PICK_DATE, BTN_BELLS])
 )
 async def show_by_date(message: Message, state: FSMContext) -> None:
     from app.bot.keyboards.menu import BTN_GROUP, BTN_NOTIFICATIONS, BTN_INFO

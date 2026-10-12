@@ -10,6 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot.handlers import (
     admin,
+    bells,
     broadcast,
     broadcast_deferred,
     broadcast_drafts,
@@ -42,6 +43,7 @@ async def main() -> None:
     dp.include_router(broadcast_history.router)
     dp.include_router(broadcast_drafts.router)
     dp.include_router(start.router)
+    dp.include_router(bells.router)
     dp.include_router(settings.router)  # Переставлено: settings ПЕРЕД schedule
     dp.include_router(schedule.router)  # schedule последним, т.к. содержит waiting_date (перехватывает весь текст)
 

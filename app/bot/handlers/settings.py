@@ -5,6 +5,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.bot.handlers.bells import cleanup_bells_message
 from app.bot.keyboards.menu import (
     BTN_GROUP, BTN_INFO, BTN_NOTIFICATIONS, notifications_keyboard,
 )
@@ -17,6 +18,7 @@ router = Router(name="settings")
 
 @router.message(F.text == BTN_GROUP)
 async def my_group(message: Message, state: FSMContext) -> None:
+    await cleanup_bells_message(message, state)
     await state.clear()  # Сбрасываем режим выбора даты
     user = repo.get_user(message.from_user.id)
     current = user.group_name if user and user.group_name else "не выбрана"
@@ -26,6 +28,7 @@ async def my_group(message: Message, state: FSMContext) -> None:
 
 @router.message(F.text == BTN_NOTIFICATIONS)
 async def notifications(message: Message, state: FSMContext) -> None:
+    await cleanup_bells_message(message, state)
     await state.clear()  # Сбрасываем режим выбора даты
     user = repo.get_or_create_user(
         message.from_user.id, message.from_user.username, message.from_user.full_name
@@ -51,6 +54,7 @@ async def toggle_notifications(callback: CallbackQuery) -> None:
 
 @router.message(F.text == BTN_INFO)
 async def info(message: Message, state: FSMContext) -> None:
+    await cleanup_bells_message(message, state)
     await state.clear()  # Сбрасываем режим выбора даты
     config = get_config()
     await message.answer(

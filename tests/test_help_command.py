@@ -87,13 +87,18 @@ def test_help_and_unknown_commands() -> None:
                 await send("абракадабра")
                 assert not any("Не понял дату" in text for text in sent_texts())
 
-                # When: короткие команды /date и /changes.
+                # When: короткая команда /date.
                 transport.reset_mock()
                 await send("/date")
                 assert any("Введите дату" in text for text in sent_texts())
+                # /changes — админская: обычному пользователю бот молчит
+                # (команды как будто не существует).
                 transport.reset_mock()
                 await send("/changes")
-                assert any("Файлы изменений" in text for text in sent_texts())
+                assert not any(
+                    isinstance(call.args[1], SendMessage) and call.args[1].text
+                    for call in transport.call_args_list
+                )
                 print("PASS: help, unknown command, state reset, shortcuts")
         finally:
             await bot.session.close()
