@@ -7,6 +7,7 @@ from datetime import date
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.database import repository as repo
 from app.utils import today_perm
@@ -14,15 +15,17 @@ from app.utils import today_perm
 logger = logging.getLogger(__name__)
 
 
-async def _safe_send(bot: Bot, chat_id: int, text: str) -> bool:
+async def _safe_send(
+    bot: Bot, chat_id: int, text: str, reply_markup: InlineKeyboardMarkup | None = None
+) -> bool:
     try:
-        await bot.send_message(chat_id, text)
+        await bot.send_message(chat_id, text, reply_markup=reply_markup)
         return True
     except TelegramForbiddenError:
         logger.info("Пользователь %s заблокировал бота", chat_id)
     except TelegramRetryAfter as exc:
         await asyncio.sleep(exc.retry_after)
-        return await _safe_send(bot, chat_id, text)
+        return await _safe_send(bot, chat_id, text, reply_markup=reply_markup)
     except TelegramAPIError as exc:
         logger.warning("Ошибка Telegram API для %s: %s", chat_id, exc)
     except Exception:
@@ -56,6 +59,12 @@ async def notify_about_schedule_update(
         if is_new
         else "⚠️ <b>Появились изменения в расписании!</b>"
     )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="Посмотреть⬇️",
+            callback_data=f"pickdate:{schedule_date.isoformat()}",
+        )
+    ]])
     sent = 0
     for user in users:
         text = (
@@ -63,9 +72,9 @@ async def notify_about_schedule_update(
             f"📅 На: {day}\n"
             f"👨‍🎓 Ваша группа: <b>{user.group_name}</b>\n\n"
             f"<i>{title}</i>\n"
-            "Нажмите «📍 Сегодня» или «📆 Завтра», чтобы увидеть актуальное расписание."
+            "Нажмите «Посмотреть⬇️», чтобы увидеть актуальное расписание."
         )
-        if await _safe_send(bot, user.telegram_id, text):
+        if await _safe_send(bot, user.telegram_id, text, reply_markup=keyboard):
             sent += 1
         await asyncio.sleep(0.05)  # мягкий лимит Telegram
 

@@ -65,6 +65,10 @@ async def _run_notification_scenario(bot, *, day: date):
     assert sent == 1
     sent_text = bot.send_message.call_args[0][1]
     assert "Появилось новое расписание!" in sent_text
+    keyboard = bot.send_message.call_args.kwargs["reply_markup"]
+    button = keyboard.inline_keyboard[0][0]
+    assert button.text == "Посмотреть⬇️"
+    assert button.callback_data == f"pickdate:{day.isoformat()}"
 
     # 2. Повторная обработка того же расписания
     bot.send_message.reset_mock()
@@ -102,6 +106,7 @@ async def _run_notification_scenario(bot, *, day: date):
     assert sent_changed == 1
     changed_text = bot.send_message.call_args[0][1]
     assert "Появились изменения в расписании!" in changed_text
+    assert bot.send_message.call_args.kwargs["reply_markup"] == keyboard
 
     # 4. Проверка notify_users=False (режим админки)
     bot.send_message.reset_mock()
