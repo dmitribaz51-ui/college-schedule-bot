@@ -22,7 +22,7 @@ from app.bot.keyboards.broadcast_kb import (
     drafts_keyboard,
 )
 from app.database import broadcast_repo
-from app.services.manual_broadcast_content import BroadcastContent
+from app.services.manual_broadcast_content import BroadcastContent, TEXT_FORMAT_PLAIN
 from app.services.manual_broadcast_service import send_manual_broadcast_detailed
 
 router = Router(name="broadcast_drafts")
@@ -33,6 +33,7 @@ def _detail_text(record) -> str:
         content_type=record.content_type or "text",
         text=record.text,
         file_id=record.file_id,
+        text_format=record.text_format or TEXT_FORMAT_PLAIN,
     )
     when = record.created_at.strftime("%d.%m.%Y %H:%M") if record.created_at else "?"
     label = audience_label(record.audience_type, record.group_name)
@@ -105,6 +106,7 @@ async def send_draft(callback: CallbackQuery, bot: Bot) -> None:
         content_type=record.content_type or "text",
         text=record.text,
         file_id=record.file_id,
+        text_format=record.text_format or TEXT_FORMAT_PLAIN,
     )
     users = resolve_audience(record.audience_type, record.group_name)
     broadcast_repo.mark_broadcast_sending(broadcast_id)
@@ -167,6 +169,7 @@ async def edit_draft(callback: CallbackQuery, state: FSMContext) -> None:
         broadcast_id=record.id,
         content_type=record.content_type,
         text=record.text,
+        text_format=record.text_format or TEXT_FORMAT_PLAIN,
         file_id=record.file_id,
     )
     await state.set_state(BroadcastStates.waiting_text)

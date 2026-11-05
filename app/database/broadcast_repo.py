@@ -15,6 +15,7 @@ def create_broadcast(
     group_name: str | None = None,
     content_type: str = "text",
     text: str | None = None,
+    text_format: str = "plain",
     file_id: str | None = None,
     status: str = "draft",
     created_by: int | None = None,
@@ -27,6 +28,7 @@ def create_broadcast(
             group_name=group_name,
             content_type=content_type,
             text=text,
+            text_format=text_format,
             file_id=file_id,
             status=status,
             created_by=created_by,
@@ -82,6 +84,7 @@ def update_broadcast_content(
     *,
     content_type: str,
     text: str | None,
+    text_format: str = "plain",
     file_id: str | None,
 ) -> None:
     with get_session() as s:
@@ -90,6 +93,7 @@ def update_broadcast_content(
             return
         record.content_type = content_type
         record.text = text
+        record.text_format = text_format
         record.file_id = file_id
 
 

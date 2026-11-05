@@ -4,6 +4,15 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.database.models import Broadcast
+from app.services.manual_broadcast_content import html_to_plain
+
+
+def _button_title(text: str | None, text_format: str | None) -> str:
+    """Короткий текст для кнопки без HTML-тегов (premium-эмодзи — fallback)."""
+    raw = text or ""
+    if (text_format or "plain") == "html":
+        raw = html_to_plain(raw)
+    return raw.strip().replace("\n", " ")[:28] or "[медиа]"
 
 
 def center_keyboard() -> InlineKeyboardMarkup:
@@ -41,6 +50,7 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Отправить сейчас", callback_data="broadcast:send")],
+            [InlineKeyboardButton(text="🧪 Тест себе", callback_data="broadcast:test")],
             [InlineKeyboardButton(text="🕒 Отложить", callback_data="broadcast:schedule")],
             [InlineKeyboardButton(text="💾 В черновик", callback_data="broadcast:save_draft")],
             [InlineKeyboardButton(text="✏️ Изменить", callback_data="broadcast:edit")],
@@ -54,7 +64,7 @@ def history_keyboard(items: list[Broadcast]) -> InlineKeyboardMarkup:
     for item in items:
         day = item.created_at.strftime("%d.%m %H:%M") if item.created_at else "?"
         status = _status_emoji(item.status)
-        title = (item.text or "[медиа]").strip().replace("\n", " ")[:28] or "[медиа]"
+        title = _button_title(item.text, item.text_format)
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -85,7 +95,7 @@ def drafts_keyboard(items: list[Broadcast]) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
     for item in items:
         day = item.created_at.strftime("%d.%m %H:%M") if item.created_at else "?"
-        title = (item.text or "[медиа]").strip().replace("\n", " ")[:28] or "[медиа]"
+        title = _button_title(item.text, item.text_format)
         buttons.append(
             [
                 InlineKeyboardButton(

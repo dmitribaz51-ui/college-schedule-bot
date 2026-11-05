@@ -60,6 +60,7 @@ class Broadcast(Base):
     group_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
     content_type: Mapped[str] = mapped_column(String(16), default="text")  # text | photo | document
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_format: Mapped[str] = mapped_column(String(16), default="plain")  # plain | html
     file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | scheduled | sending | sent | cancelled
     created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -4,6 +4,8 @@ from __future__ import annotations
 from html import escape
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -11,7 +13,6 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.handlers.broadcast_common import (
     audience_label,
     audience_snapshot,
-    content_preview_text,
     is_admin,
     resolve_audience,
     show_center,
@@ -23,10 +24,12 @@ from app.bot.keyboards.broadcast_kb import (
     groups_keyboard,
 )
 from app.database import broadcast_repo, repository as repo
+from app.database.models import User
 from app.services.manual_broadcast_content import (
     BroadcastContent,
     content_from_message,
     content_from_state,
+    content_variants,
 )
 from app.services.manual_broadcast_service import send_manual_broadcast_detailed
 
@@ -40,6 +43,49 @@ class BroadcastStates(StatesGroup):
     waiting_schedule = State()
 
 
+async def _send_preview_variant(message: Message, content: BroadcastContent) -> None:
+    parse_mode = ParseMode.HTML if content.is_html else None
+    markup = confirm_keyboard()
+    if content.content_type == "photo" and content.file_id:
+        caption = content.text or None
+        await message.answer_photo(
+            photo=content.file_id,
+            caption=caption,
+            parse_mode=parse_mode if caption else None,
+            reply_markup=markup,
+        )
+        return
+    if content.content_type == "document" and content.file_id:
+        caption = content.text or None
+        await message.answer_document(
+            document=content.file_id,
+            caption=caption,
+            parse_mode=parse_mode if caption else None,
+            reply_markup=markup,
+        )
+        return
+    await message.answer(
+        content.text or "",
+        parse_mode=parse_mode,
+        reply_markup=markup,
+    )
+
+
+async def _send_preview_content(message: Message, content: BroadcastContent) -> None:
+    """Отправляет точную копию будущего сообщения — с разметкой и premium-эмодзи."""
+    last_exc: TelegramBadRequest | None = None
+    for item in content_variants(content):
+        try:
+            await _send_preview_variant(message, item)
+            return
+        except TelegramBadRequest as exc:
+            last_exc = exc
+            if not item.is_html:
+                raise
+    if last_exc is not None:
+        raise last_exc
+
+
 async def _send_preview(
     message: Message, label: str, count: int, content: BroadcastContent
 ) -> None:
@@ -47,25 +93,10 @@ async def _send_preview(
         "📋 <b>Предварительный просмотр</b>\n\n"
         f"Аудитория: <b>{escape(label)}</b>\n"
         f"Получателей: <b>{count}</b>\n\n"
-        f"{content_preview_text(content)}"
+        "Ниже — сообщение, которое получат пользователи:"
     )
-    if content.content_type == "photo" and content.file_id:
-        await message.answer(header)
-        await message.answer_photo(
-            photo=content.file_id,
-            caption=content.text or None,
-            reply_markup=confirm_keyboard(),
-        )
-        return
-    if content.content_type == "document" and content.file_id:
-        await message.answer(header)
-        await message.answer_document(
-            document=content.file_id,
-            caption=content.text or None,
-            reply_markup=confirm_keyboard(),
-        )
-        return
-    await message.answer(header, reply_markup=confirm_keyboard())
+    await message.answer(header)
+    await _send_preview_content(message, content)
 
 
 @router.callback_query(F.data == "admin:broadcast")
@@ -157,7 +188,10 @@ async def show_broadcast_preview(message: Message, state: FSMContext) -> None:
     label = audience_label(audience, group_name) if isinstance(audience, str) else "Не выбрана"
     users = resolve_audience(audience, group_name) if isinstance(audience, str) else []
     await state.update_data(
-        content_type=content.content_type, text=content.text, file_id=content.file_id
+        content_type=content.content_type,
+        text=content.text,
+        text_format=content.text_format,
+        file_id=content.file_id,
     )
     await _send_preview(message, label, len(users), content)
 
@@ -192,6 +226,7 @@ async def send_broadcast(callback: CallbackQuery, state: FSMContext, bot: Bot) -
             broadcast_id,
             content_type=content.content_type,
             text=content.text,
+            text_format=content.text_format,
             file_id=content.file_id,
         )
     else:
@@ -200,6 +235,7 @@ async def send_broadcast(callback: CallbackQuery, state: FSMContext, bot: Bot) -
             group_name=group_name,
             content_type=content.content_type,
             text=content.text,
+            text_format=content.text_format,
             file_id=content.file_id,
             status="sending",
             created_by=callback.from_user.id,
@@ -232,6 +268,40 @@ async def send_broadcast(callback: CallbackQuery, state: FSMContext, bot: Bot) -
         f"Доставлено: <b>{result.sent}</b>\n"
         f"Ошибки: <b>{result.failed}</b>",
         reply_markup=center_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "broadcast:test")
+async def test_broadcast(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    """Отправляет подготовленную рассылку только администратору."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    data = await state.get_data()
+    content = content_from_state(data)
+    if content is None:
+        await callback.answer("Сначала подготовьте сообщение", show_alert=True)
+        return
+    await callback.answer("Отправляю тест…")
+    test_user = User(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.username,
+    )
+    result = await send_manual_broadcast_detailed(bot, [test_user], content)
+    if result.sent:
+        await callback.message.answer(
+            "🧪 <b>Тест отправлен</b>\n\n"
+            "Сообщение выше — точная копия будущей рассылки: проверьте шрифт "
+            "и эмодзи.\n\n"
+            "Если premium-эмодзи показались обычными — Telegram не разрешает "
+            "их этому боту (нужен username, купленный на Fragment). Жирный/"
+            "курсив при этом сохраняются."
+        )
+        return
+    error = result.failures[0].error if result.failures else "unknown"
+    await callback.message.answer(
+        "🧪 <b>Тест не доставлен</b>\n\n"
+        f"Причина: <code>{escape(error)}</code>"
     )
 
 

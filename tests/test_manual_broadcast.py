@@ -118,11 +118,38 @@ def test_manual_broadcast_preview_and_audiences() -> None:
                     for call in transport.call_args_list
                     if isinstance(call.args[1], SendMessage)
                 ]
-                preview = messages[-1].text
-                assert "Только подписанные на уведомления" in preview
-                assert "Получателей: <b>2</b>" in preview
-                assert "&lt;b&gt;Тестовая рассылка&lt;/b&gt;" in preview
+                header = next(
+                    item.text
+                    for item in messages
+                    if "Предварительный просмотр" in item.text
+                )
+                preview = messages[-1]
+                assert "Только подписанные на уведомления" in header
+                assert "Получателей: <b>2</b>" in header
+                assert preview.text == "&lt;b&gt;Тестовая рассылка&lt;/b&gt;"
+                assert preview.parse_mode == "HTML"
                 assert any("Центр рассылок" in item.text for item in edits)
+
+                test_users: list = []
+
+                async def mock_test_send(bot_obj, users, content):
+                    test_users.extend(users)
+                    return DetailedBroadcastResult(total=len(users), sent=len(users))
+
+                with patch.object(
+                    broadcast,
+                    "send_manual_broadcast_detailed",
+                    side_effect=mock_test_send,
+                ):
+                    await click("broadcast:test")
+
+                assert [user.telegram_id for user in test_users] == [1]
+                assert broadcast_repo.count_broadcasts() == 0
+                assert any(
+                    "Тест отправлен" in call.args[1].text
+                    for call in transport.call_args_list
+                    if isinstance(call.args[1], SendMessage)
+                )
 
                 transport.reset_mock()
                 await click("broadcast:cancel")

@@ -52,6 +52,17 @@ def init_db(database_url: str) -> None:
                     "ADD COLUMN telegram_file_id VARCHAR(255)"
                 )
             )
+        broadcast_columns = {
+            column["name"]
+            for column in inspect(_engine).get_columns("broadcasts")
+        }
+        if "text_format" not in broadcast_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE broadcasts "
+                    "ADD COLUMN text_format VARCHAR(16) DEFAULT 'plain'"
+                )
+            )
     logger.info("База данных готова: %s", database_url)
 
 

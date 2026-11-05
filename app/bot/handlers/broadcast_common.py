@@ -55,10 +55,10 @@ def parse_schedule_datetime(raw: str) -> datetime | None:
 
 def content_preview_text(content: BroadcastContent) -> str:
     title = content.preview_title()
-    body = escape(content.text or "[без текста]")
-    if len(body) > 800:
-        body = body[:800] + "…"
-    return f"{title}\n{body}"
+    raw = content.plain_text() or "[без текста]"
+    if len(raw) > 800:
+        raw = raw[:800] + "…"
+    return f"{title}\n{escape(raw)}"
 
 
 async def show_center(message: Message) -> None:

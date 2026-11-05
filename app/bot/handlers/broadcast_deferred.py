@@ -38,6 +38,7 @@ async def save_broadcast_draft(callback: CallbackQuery, state: FSMContext) -> No
             draft_id,
             content_type=content.content_type,
             text=content.text,
+            text_format=content.text_format,
             file_id=content.file_id,
         )
     else:
@@ -46,6 +47,7 @@ async def save_broadcast_draft(callback: CallbackQuery, state: FSMContext) -> No
             group_name=group_name,
             content_type=content.content_type,
             text=content.text,
+            text_format=content.text_format,
             file_id=content.file_id,
             status="draft",
             created_by=callback.from_user.id,
@@ -100,6 +102,7 @@ async def save_scheduled_broadcast(message: Message, state: FSMContext) -> None:
             draft_id,
             content_type=content.content_type,
             text=content.text,
+            text_format=content.text_format,
             file_id=content.file_id,
         )
         broadcast_repo.mark_broadcast_scheduled(draft_id, when)
@@ -110,6 +113,7 @@ async def save_scheduled_broadcast(message: Message, state: FSMContext) -> None:
             group_name=group_name,
             content_type=content.content_type,
             text=content.text,
+            text_format=content.text_format,
             file_id=content.file_id,
             status="scheduled",
             created_by=message.from_user.id,

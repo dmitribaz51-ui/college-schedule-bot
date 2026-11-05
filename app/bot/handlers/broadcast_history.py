@@ -17,7 +17,7 @@ from app.bot.keyboards.broadcast_kb import (
     history_keyboard,
 )
 from app.database import broadcast_repo
-from app.services.manual_broadcast_content import BroadcastContent
+from app.services.manual_broadcast_content import BroadcastContent, TEXT_FORMAT_PLAIN
 
 router = Router(name="broadcast_history")
 
@@ -31,6 +31,7 @@ def _detail_text(record) -> str:
         content_type=record.content_type or "text",
         text=record.text,
         file_id=record.file_id,
+        text_format=record.text_format or TEXT_FORMAT_PLAIN,
     )
     when = record.created_at.strftime("%d.%m.%Y %H:%M") if record.created_at else "?"
     lines = [

@@ -8,11 +8,15 @@ from unittest.mock import AsyncMock, patch
 
 import anyio
 from aiogram import Bot, Dispatcher
-from aiogram.methods import EditMessageText
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import EditMessageText, SendMessage
 from aiogram.types import (
     CallbackQuery,
     Chat,
     Message,
+    MessageEntity,
+    PhotoSize,
     Update,
     User as TelegramUser,
 )
@@ -23,7 +27,13 @@ from app.bot.handlers import broadcast, broadcast_drafts, broadcast_history
 from app.bot.handlers.broadcast_common import parse_schedule_datetime
 from app.database import broadcast_repo
 from app.database.models import Base, User
-from app.services.manual_broadcast_content import BroadcastContent, content_from_state
+from app.services.manual_broadcast_content import (
+    BroadcastContent,
+    content_from_message,
+    content_from_state,
+    content_variants,
+)
+from app.services.manual_broadcast_service import _safe_send_content
 
 
 def test_parse_schedule_datetime() -> None:
@@ -45,7 +55,112 @@ def test_content_from_state() -> None:
     )
     assert photo is not None and photo.content_type == "photo"
     assert content_from_state({"content_type": "photo", "file_id": None}) is None
+    html = content_from_state(
+        {
+            "content_type": "text",
+            "text": "<b>hello</b> 👍",
+            "text_format": "html",
+        }
+    )
+    assert html is not None and html.is_html
+    assert html.plain_text() == "hello 👍"
     print("PASS: content validation")
+
+
+def test_content_from_message_keeps_formatting_and_premium_emoji() -> None:
+    emoji_id = "5368324170671202286"
+    text_message = Message(
+        message_id=1,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=1, type="private"),
+        from_user=TelegramUser(id=1, is_bot=False, first_name="Admin"),
+        text="Привет 👍",
+        entities=[
+            MessageEntity(type="bold", offset=0, length=6),
+            MessageEntity(
+                type="custom_emoji",
+                offset=7,
+                length=2,
+                custom_emoji_id=emoji_id,
+            ),
+        ],
+    )
+    content = content_from_message(text_message)
+    assert content is not None
+    assert content.text_format == "html"
+    assert content.text == (
+        f'<b>Привет</b> '
+        f'<tg-emoji emoji-id="{emoji_id}">👍</tg-emoji>'
+    )
+    assert content.plain_text() == "Привет 👍"
+
+    variants = content_variants(content)
+    assert [item.text_format for item in variants] == ["html", "html", "plain"]
+    assert variants[1].text == "<b>Привет</b> 👍"
+    assert variants[2].text == "Привет 👍"
+
+    photo_message = Message(
+        message_id=2,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=1, type="private"),
+        from_user=TelegramUser(id=1, is_bot=False, first_name="Admin"),
+        photo=[
+            PhotoSize(
+                file_id="photo123",
+                file_unique_id="photo123",
+                width=10,
+                height=10,
+            )
+        ],
+        caption="Курсив 👍",
+        caption_entities=[
+            MessageEntity(type="italic", offset=0, length=6),
+            MessageEntity(
+                type="custom_emoji",
+                offset=7,
+                length=2,
+                custom_emoji_id=emoji_id,
+            ),
+        ],
+    )
+    photo = content_from_message(photo_message)
+    assert photo is not None and photo.content_type == "photo"
+    assert photo.text_format == "html"
+    assert photo.text == (
+        f'<i>Курсив</i> '
+        f'<tg-emoji emoji-id="{emoji_id}">👍</tg-emoji>'
+    )
+    print("PASS: formatting/premium emoji")
+
+
+def test_safe_send_content_downgrades_custom_emoji_only() -> None:
+    calls: list[tuple[str, ParseMode | None]] = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, parse_mode=None):
+            calls.append((text, parse_mode))
+            if "tg-emoji" in text:
+                raise TelegramBadRequest(
+                    method=SendMessage(chat_id=chat_id, text=text),
+                    message="Bad Request: can't parse entities: custom emoji",
+                )
+
+    emoji_id = "5368324170671202286"
+    content = BroadcastContent(
+        content_type="text",
+        text=f'<b>Привет</b> <tg-emoji emoji-id="{emoji_id}">👍</tg-emoji>',
+        text_format="html",
+    )
+
+    async def scenario() -> None:
+        ok, error = await _safe_send_content(FakeBot(), 1, content)
+        assert ok and error is None
+
+    anyio.run(scenario)
+    assert len(calls) == 2
+    assert calls[0][1] == ParseMode.HTML
+    assert calls[1] == ("<b>Привет</b> 👍", ParseMode.HTML)
+    print("PASS: custom emoji downgrade")
 
 
 def test_broadcast_history_and_drafts() -> None:
@@ -64,10 +179,14 @@ def test_broadcast_history_and_drafts() -> None:
                 audience_type="group",
                 group_name="A",
                 content_type="text",
-                text="draft text",
+                text="<b>draft text</b>",
+                text_format="html",
                 status="draft",
                 created_by=1,
             )
+            draft_record = broadcast_repo.get_broadcast(draft_id)
+            assert draft_record is not None
+            assert draft_record.text_format == "html"
             sent_id = broadcast_repo.create_broadcast(
                 audience_type="all",
                 content_type="text",
