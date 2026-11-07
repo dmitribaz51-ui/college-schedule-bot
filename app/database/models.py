@@ -31,6 +31,21 @@ class User(Base):
     )
 
 
+class Group(Base):
+    """Реестр групп. Нужен для заочки: группы видны до появления пар."""
+
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    course: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    faculty: Mapped[str] = mapped_column(String(32), default="permskaya")
+    study_form: Mapped[str] = mapped_column(String(16), default="part_time")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ScheduleFile(Base):
     __tablename__ = "schedule_files"
 
@@ -104,6 +119,8 @@ class Lesson(Base):
     teacher: Mapped[str | None] = mapped_column(String(255), nullable=True)
     room: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    end_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     source_type: Mapped[str] = mapped_column(String(16))         # schedule | changes
     source_file_id: Mapped[int | None] = mapped_column(
         ForeignKey("schedule_files.id"), nullable=True

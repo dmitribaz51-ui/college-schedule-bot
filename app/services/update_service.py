@@ -3,14 +3,25 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 from app.config import get_config
 from app.database import repository as repo
-from app.parser.excel_downloader import DownloadError, build_file_name, download_excel
+from app.parser.excel_downloader import (
+    DownloadError,
+    build_file_name,
+    download_excel,
+    download_pdf,
+)
 from app.parser.excel_parser import parse_excel_file
-from app.parser.website_parser import ScheduleLink, fetch_schedule_links
+from app.parser.pdf_parser import parse_pdf_file
+from app.parser.website_parser import (
+    ScheduleLink,
+    fetch_pdf_schedule_links,
+    fetch_schedule_links,
+)
 from app.services.notification_service import notify_about_schedule_update
+from app.utils import course_from_group, detect_faculty, today_perm
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +176,183 @@ async def _process_link(
         )
 
 
+async def _process_pdf_link(
+    link: ScheduleLink,
+    report: UpdateReport,
+    force_reprocess: bool = False,
+) -> None:
+    """Недельный PDF заочки: скачать, разобрать текст, сохранить пары."""
+    config = get_config()
+    file_name = build_file_name(link.schedule_date, link.file_type, link.url)
+    pdf_dir = config.pdf_dir / "zaochnoe"
+
+    try:
+        downloaded = await download_pdf(link.url, pdf_dir, file_name)
+    except DownloadError as exc:
+        repo.upsert_file(
+            title=link.title,
+            url=link.url,
+            file_type=link.file_type,
+            faculty="zaochnoe",
+            schedule_date=link.schedule_date,
+            processed=False,
+            error=str(exc),
+            update_check_time=True,
+        )
+        report.errors.append(f"{link.title}: {exc}")
+        logger.error("PDF не скачан (%s): %s", link.title, exc)
+        return
+
+    existing = repo.get_file_by_url(link.url)
+    if (
+        existing
+        and existing.file_hash == downloaded.sha256
+        and existing.processed
+        and not force_reprocess
+    ):
+        # Файл не изменился: не парсим и не OCR-им повторно каждые 25 минут.
+        repo.upsert_file(
+            title=link.title,
+            url=link.url,
+            file_type=link.file_type,
+            faculty="zaochnoe",
+            schedule_date=link.schedule_date,
+            file_hash=downloaded.sha256,
+            local_path=str(downloaded.path),
+            processed=existing.processed,
+            error=existing.error,
+            update_check_time=True,
+        )
+        report.skipped += 1
+        return
+
+    if not force_reprocess and repo.file_hash_exists(
+        downloaded.sha256, exclude_url=link.url
+    ):
+        repo.upsert_file(
+            title=link.title,
+            url=link.url,
+            file_type=link.file_type,
+            faculty="zaochnoe",
+            schedule_date=link.schedule_date,
+            file_hash=downloaded.sha256,
+            local_path=str(downloaded.path),
+            processed=True,
+            error="Дубликат уже обработанного PDF",
+            update_check_time=True,
+        )
+        report.skipped += 1
+        return
+
+    file_id = repo.upsert_file(
+        title=link.title,
+        url=link.url,
+        file_type=link.file_type,
+        faculty="zaochnoe",
+        schedule_date=link.schedule_date,
+        file_hash=downloaded.sha256,
+        local_path=str(downloaded.path),
+        processed=False,
+        update_check_time=True,
+    )
+
+    # Группы из названия ссылки нужны даже для сканов: так все заочные
+    # группы появляются в списке до того, как появится текст расписания.
+    if link.groups:
+        for group in link.groups:
+            repo.upsert_groups(
+                [(group, course_from_group(group, link.schedule_date))],
+                faculty=detect_faculty(group),
+            )
+
+    try:
+        schedules = parse_pdf_file(downloaded.path)
+    except Exception as exc:
+        repo.upsert_file(
+            title=link.title,
+            url=link.url,
+            file_type=link.file_type,
+            faculty="zaochnoe",
+            schedule_date=link.schedule_date,
+            file_hash=downloaded.sha256,
+            local_path=str(downloaded.path),
+            processed=False,
+            error=f"Ошибка разбора PDF: {exc}",
+            update_check_time=True,
+        )
+        report.errors.append(f"{link.title}: ошибка разбора PDF")
+        logger.exception("Ошибка разбора PDF %s", downloaded.path)
+        return
+
+    if not schedules:
+        # Скан без текстового слоя. Файл уже сохранён — позже его заберёт OCR.
+        repo.upsert_file(
+            title=link.title,
+            url=link.url,
+            file_type=link.file_type,
+            faculty="zaochnoe",
+            schedule_date=link.schedule_date,
+            file_hash=downloaded.sha256,
+            local_path=str(downloaded.path),
+            processed=True,
+            error="PDF без текстового слоя (нужен OCR)",
+            update_check_time=True,
+        )
+        report.errors.append(f"{link.title}: PDF без текстового слоя (нужен OCR)")
+        return
+
+    saved_groups: list[str] = []
+    changed_groups: list[str] = []
+    saved_lessons = 0
+    for schedule in schedules:
+        group_faculty = detect_faculty(schedule.group)
+        saved_count, changed = repo.replace_group_lessons(
+            schedule_date=schedule.schedule_date,
+            group_name=schedule.group,
+            source_type=link.file_type,
+            course=schedule.course,
+            lessons=[lesson.to_dict() for lesson in schedule.lessons],
+            source_file_id=file_id,
+            faculty=group_faculty,
+        )
+        saved_lessons += saved_count
+        saved_groups.append(schedule.group)
+        if changed:
+            changed_groups.append(schedule.group)
+        repo.upsert_groups(
+            [(schedule.group, schedule.course)],
+            faculty=group_faculty,
+        )
+
+    error = None if saved_groups else "Не удалось распознать ни одной группы"
+    repo.upsert_file(
+        title=link.title,
+        url=link.url,
+        file_type=link.file_type,
+        faculty="zaochnoe",
+        schedule_date=link.schedule_date,
+        file_hash=downloaded.sha256,
+        local_path=str(downloaded.path),
+        processed=bool(saved_groups),
+        error=error,
+        update_check_time=True,
+    )
+    if not saved_groups:
+        report.errors.append(f"{link.title}: группы не распознаны")
+        return
+
+    report.new_files.append(
+        ProcessedFile(
+            title=link.title,
+            file_type=link.file_type,
+            schedule_date=link.schedule_date,
+            groups=saved_groups,
+            lessons_saved=saved_lessons,
+            changed_groups=changed_groups,
+        )
+    )
+
+
 async def check_for_updates(
     bot=None, force_reprocess: bool = False, notify_users: bool = True
 ) -> UpdateReport:
@@ -173,33 +361,50 @@ async def check_for_updates(
     report = UpdateReport()
 
     from app.parser.website_parser import fetch_all_schedule_links
+
     links_with_faculty = await fetch_all_schedule_links([
         ("permskaya", config.schedule_page_url),
         ("chernyshevskogo", config.chernyshevskogo_page_url),
     ])
-    links = [link for _, link in links_with_faculty]
-    report.links_found = len(links)
-    if not links:
+
+    pdf_links = await fetch_pdf_schedule_links(config.zaochnoe_page_url)
+    # Старые недели не нужны, но 05.10/12.10 ещё полезны для истории.
+    oldest = today_perm() - timedelta(days=60)
+    pdf_links = [
+        link for link in pdf_links
+        if link.schedule_date is not None and link.schedule_date >= oldest
+    ]
+    links_with_faculty.extend(("zaochnoe", link) for link in pdf_links)
+
+    report.links_found = len(links_with_faculty)
+    if not links_with_faculty:
         return report
 
     known_urls = repo.get_processed_urls()
     # URL файлов, которые давно не проверялись (>25 минут)
     urls_needing_recheck = repo.get_urls_needing_recheck(minutes=25)
-    
+
     for faculty, link in links_with_faculty:
         # Пропускаем только если файл известен И не требует перепроверки И не force_reprocess
         if link.url in known_urls and link.url not in urls_needing_recheck and not force_reprocess:
             report.skipped += 1
             continue
         try:
-            await _process_link(
-                link,
-                report,
-                bot=bot,
-                faculty=faculty,
-                force_reprocess=force_reprocess,
-                notify_users=notify_users,
-            )
+            if faculty == "zaochnoe":
+                await _process_pdf_link(
+                    link,
+                    report,
+                    force_reprocess=force_reprocess,
+                )
+            else:
+                await _process_link(
+                    link,
+                    report,
+                    bot=bot,
+                    faculty=faculty,
+                    force_reprocess=force_reprocess,
+                    notify_users=notify_users,
+                )
         except Exception as exc:
             logger.exception("Ошибка обработки ссылки %s", link.url)
             report.errors.append(f"{link.title}: {exc}")

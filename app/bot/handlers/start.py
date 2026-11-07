@@ -16,7 +16,7 @@ from app.bot.keyboards.menu import (
 )
 from app.bot.handlers.bells import cleanup_bells_message
 from app.database import repository as repo
-from app.utils import detect_faculty, normalize_group
+from app.utils import detect_faculty, is_part_time_group, normalize_group
 
 logger = logging.getLogger(__name__)
 router = Router(name="start")
@@ -134,9 +134,15 @@ async def choose_course(callback: CallbackQuery, state: FSMContext) -> None:
 
     groups = repo.get_groups(course, faculty)
     if groups:
+        note = ""
+        if any(is_part_time_group(group) for group in groups):
+            note = (
+                "\nГруппы с припиской «зо» — заочное отделение "
+                "(например, ТД-24-9 зо)."
+            )
         await state.set_state(Registration.group)
         await callback.message.edit_text(
-            f"Курс: <b>{course}</b>\nТеперь выберите вашу <b>группу</b>:",
+            f"Курс: <b>{course}</b>\nТеперь выберите вашу <b>группу</b>:{note}",
             reply_markup=groups_keyboard(groups),
         )
     else:

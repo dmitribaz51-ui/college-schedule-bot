@@ -113,23 +113,50 @@ def human_date(day: date) -> str:
     return f"{day.strftime('%d.%m.%Y')} ({WEEKDAYS[day.weekday()]})"
 
 
+GROUP_BASE_RE = (
+    r"[А-ЯЁA-Z]{1,6}-\d{1,2}-\d{1,2}"
+    r"(?:[А-ЯЁA-Z](?:-\d+)?|-\d+)?"
+)
+
+
 def normalize_group(raw: str | None) -> str | None:
-    """'тд 26 9' / 'ТД–26–9' / 'ТД-24-9к-2' -> 'ТД-26-9' / 'ТД-24-9К-2'. Возвращает None, если это не похоже на группу."""
+    """'тд 26 9' / 'ТД–26–9' / 'ТД-24-9к-2' -> 'ТД-26-9' / 'ТД-24-9К-2'.
+
+    Для заочки принимает суффикс «зо»: 'л 24 11 зо' / 'Л-24-11-ЗО'
+    -> 'Л-24-11 зо'. Возвращает None, если это не похоже на группу.
+    """
     if not raw:
         return None
     text = raw.strip().upper().replace("–", "-").replace("—", "-")
     # Заменяем пробелы на дефисы, удаляем дубли дефисов
     text = re.sub(r"\s+", "-", text)
     text = re.sub(r"-{2,}", "-", text).strip("-")
-    # Форматы: ТД-26-9 / ТД-26-9А / ТД-24-9К-2 / Л-26-9-1
-    # Базовый формат: БУКВЫ-ЦИФРЫ-ЦИФРЫ, потом опционально БУКВА или -БУКВА-ЦИФРА
-    if not re.fullmatch(
-        r"[А-ЯЁA-Z]{1,6}-\d{1,2}-\d{1,2}"
-        r"(?:[А-ЯЁA-Z](?:-\d+)?|-\d+)?",
-        text,
-    ):
+
+    # Заочный суффикс отделяется пробелом в названии на сайте:
+    # «Л-24-11 зо». После нормализации он выглядит как «-ЗО».
+    is_part_time = text.endswith("-ЗО")
+    if is_part_time:
+        text = text[:-3].rstrip("-")
+
+    if not re.fullmatch(GROUP_BASE_RE, text):
         return None
-    return text
+    return f"{text} зо" if is_part_time else text
+
+
+def is_part_time_group(group_name: str | None) -> bool:
+    """Заочная группа определяется по приписке «зо» в названии."""
+    return bool(group_name) and group_name.strip().upper().endswith(" ЗО")
+
+
+def course_from_group(group_name: str, reference: date | None = None) -> int | None:
+    """Курс по году набора в названии группы (Л-24-11 -> 3 в 2026/27)."""
+    match = re.search(r"-(\d{2})-", group_name or "")
+    if not match:
+        return None
+    admission = 2000 + int(match.group(1))
+    day = reference or today_perm()
+    academic_year = day.year if day.month >= 9 else day.year - 1
+    return academic_year - admission + 1
 
 
 # Префиксы групп факультета Чернышевского (дизайн и сервис)

@@ -26,6 +26,7 @@
 | Переменная | Значение | Дефолт | Описание |
 |------------|----------|--------|----------|
 | `SCHEDULE_PAGE_URL` | URL страницы расписания (факультет Пермская) | `https://pkps-perm.ru/students/raspisanie/fakultet_predprinimatelstva_ul_permskaya_226/` | Страница с Excel-файлами |
+| `ZAOCHNOE_PAGE_URL` | URL страницы заочного отделения | `https://pkps-perm.ru/students/zaochnoe-otdelenie/` | Страница с недельными PDF заочки |
 | `CHECK_INTERVAL_MINUTES` | Интервал проверки сайта (мин) | `15` | От 5 до 120 минут |
 | `LOG_LEVEL` | Уровень логирования | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 

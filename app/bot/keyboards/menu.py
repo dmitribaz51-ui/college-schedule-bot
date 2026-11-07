@@ -146,6 +146,41 @@ def pick_date_keyboard(dates: list[date]) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
+def _week_button_text(start: date, end: date) -> str:
+    if start.year == end.year:
+        return f"{start.strftime('%d.%m')}–{end.strftime('%d.%m.%Y')}"
+    return f"{start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')}"
+
+
+def week_picker_keyboard(
+    weeks: list[tuple[date, date]], index: int = 0
+) -> InlineKeyboardMarkup:
+    """Заочка: две доступные недели и стрелки листания."""
+    if not weeks:
+        return InlineKeyboardMarkup(inline_keyboard=[])
+    index = max(0, min(index, len(weeks) - 1))
+    rows: list[list[InlineKeyboardButton]] = []
+    for start, end in weeks[index : index + 2]:
+        rows.append([
+            InlineKeyboardButton(
+                text=_week_button_text(start, end),
+                callback_data=f"week:{start.isoformat()}",
+            )
+        ])
+    arrows: list[InlineKeyboardButton] = []
+    if index > 0:
+        arrows.append(
+            InlineKeyboardButton(text="◀️", callback_data=f"weekpage:{index - 1}")
+        )
+    if index + 2 < len(weeks):
+        arrows.append(
+            InlineKeyboardButton(text="▶️", callback_data=f"weekpage:{index + 1}")
+        )
+    if arrows:
+        rows.append(arrows)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def bells_back_keyboard() -> InlineKeyboardMarkup:
     """Кнопка возврата к выбору дня."""
     return InlineKeyboardMarkup(

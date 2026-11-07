@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import delete, func, select
 
 from .database import get_session
-from .models import Lesson, ScheduleFile, User
+from .models import Group, Lesson, ScheduleFile, User
 
 logger = logging.getLogger(__name__)
 
@@ -284,11 +284,15 @@ def replace_group_lessons(
                 item["number"]: (
                     item.get("subject"), item.get("teacher"),
                     item.get("room"), item.get("notes"),
+                    item.get("start_time"), item.get("end_time"),
                 )
                 for item in lessons
             }
             old_by_number = {
-                item.lesson_number: (item.subject, item.teacher, item.room, item.notes)
+                item.lesson_number: (
+                    item.subject, item.teacher, item.room, item.notes,
+                    item.start_time, item.end_time,
+                )
                 for item in comparison_lessons
             }
             old_numbers = sorted(old_by_number)
@@ -355,6 +359,8 @@ def replace_group_lessons(
                     teacher=item.get("teacher"),
                     room=item.get("room"),
                     notes=item.get("notes"),
+                    start_time=item.get("start_time"),
+                    end_time=item.get("end_time"),
                     source_type=source_type,
                     source_file_id=source_file_id,
                     faculty=faculty,
@@ -379,27 +385,124 @@ def get_lessons(schedule_date: date, group_name: str, faculty: str = "permskaya"
         )
 
 
-def get_groups(course: int | None = None, faculty: str = "permskaya") -> list[str]:
-    """Список известных групп (из разобранных файлов)."""
-    with get_session() as s:
-        if course is not None:
-            # Для 4 курса фильтруем по году в названии группы: -23-
-            # 2026 год, 4 курс = поступление в 2023 году
-            year_suffix = str(2026 - course + 1)[-2:]  # 4 курс -> "23"
-            
-            rows = s.scalars(
-                select(Lesson.group_name)
-                .where(Lesson.group_name.like(f"%-{year_suffix}-%"))
-                .where(Lesson.faculty == faculty)
-                .distinct()
-                .order_by(Lesson.group_name)
-            )
-            groups = list(rows)
-            if groups:
-                return groups
-        return list(
-            s.scalars(select(Lesson.group_name).where(Lesson.faculty == faculty).distinct().order_by(Lesson.group_name))
+def _lesson_groups(s, course: int | None, faculty: str) -> list[str]:
+    """Старое поведение: группы из разобранных Excel-файлов."""
+    if course is not None:
+        # Для 4 курса фильтруем по году в названии группы: -23-
+        # 2026 год, 4 курс = поступление в 2023 году
+        year_suffix = str(2026 - course + 1)[-2:]  # 4 курс -> "23"
+
+        rows = s.scalars(
+            select(Lesson.group_name)
+            .where(Lesson.group_name.like(f"%-{year_suffix}-%"))
+            .where(Lesson.faculty == faculty)
+            .distinct()
+            .order_by(Lesson.group_name)
         )
+        groups = list(rows)
+        if groups:
+            return groups
+    return list(
+        s.scalars(
+            select(Lesson.group_name)
+            .where(Lesson.faculty == faculty)
+            .distinct()
+            .order_by(Lesson.group_name)
+        )
+    )
+
+
+def get_groups(course: int | None = None, faculty: str = "permskaya") -> list[str]:
+    """Список известных групп: Excel-группы + реестр заочки.
+
+    Очное отделение получает ровно тот же список, что и раньше.
+    Заочные группы добавляются из таблицы groups, даже если у них
+    ещё нет разобранных пар (например, сканы 2027 года).
+    """
+    with get_session() as s:
+        full_time = _lesson_groups(s, course, faculty)
+        query = select(Group.name).where(
+            Group.faculty == faculty,
+            Group.study_form == "part_time",
+        )
+        if course is not None:
+            query = query.where(Group.course == course)
+        part_time = list(s.scalars(query.order_by(Group.name)))
+        # dict.fromkeys — стабильный порядок без дублей
+        return list(dict.fromkeys(full_time + part_time))
+
+
+def upsert_groups(
+    groups: list[tuple[str, int | None]],
+    *,
+    faculty: str = "permskaya",
+    study_form: str = "part_time",
+) -> int:
+    """Добавляет/обновляет группы в реестре. Возвращает число записей."""
+    saved = 0
+    with get_session() as s:
+        for name, course in groups:
+            if not name:
+                continue
+            record = s.scalar(select(Group).where(Group.name == name))
+            if record is None:
+                record = Group(name=name)
+                s.add(record)
+            record.course = course
+            record.faculty = faculty
+            record.study_form = study_form
+            saved += 1
+        s.flush()
+    return saved
+
+
+def get_group_weeks(
+    group_name: str,
+    faculty: str = "permskaya",
+) -> list[tuple[date, date]]:
+    """Доступные недели заочки (понедельник–суббота) по сохранённым парам."""
+    with get_session() as s:
+        dates = sorted(
+            set(
+                s.scalars(
+                    select(Lesson.schedule_date).where(
+                        Lesson.group_name == group_name,
+                        Lesson.faculty == faculty,
+                    )
+                )
+            )
+        )
+    weeks: dict[date, date] = {}
+    for day in dates:
+        start = day - timedelta(days=day.weekday())
+        weeks[start] = start + timedelta(days=5)
+    return sorted(weeks.items())
+
+
+def get_group_week_file(
+    group_name: str,
+    week_start: date,
+    faculty: str = "permskaya",
+):
+    """PDF-файл, из которого взяты пары группы за указанную неделю."""
+    week_end = week_start + timedelta(days=5)
+    with get_session() as s:
+        lesson = s.scalar(
+            select(Lesson)
+            .where(
+                Lesson.group_name == group_name,
+                Lesson.faculty == faculty,
+                Lesson.schedule_date >= week_start,
+                Lesson.schedule_date <= week_end,
+                Lesson.source_file_id.is_not(None),
+            )
+            .order_by(Lesson.schedule_date, Lesson.lesson_number)
+        )
+        if lesson and lesson.source_file_id:
+            record = s.get(ScheduleFile, lesson.source_file_id)
+            if record and record.local_path:
+                return record
+    return None
 
 
 def has_schedule_for_date(schedule_date: date) -> bool:

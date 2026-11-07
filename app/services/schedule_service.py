@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from copy import copy
-from datetime import date
+from datetime import date, timedelta
 
 from app.database import repository as repo
 from app.parser.excel_parser import MIDDAY_CLASS_HOUR, normalize_subject_room, split_lesson_text
@@ -72,6 +72,8 @@ def get_day_schedule(group: str, day: date, faculty: str = "permskaya", course: 
 
     def _item_sort_key(item: tuple[int, any, bool]) -> tuple[str, int]:
         number, lesson, _ = item
+        if lesson.start_time:
+            return (lesson.start_time, number)
         is_class_hour = "классный час" in (lesson.subject or "").lower()
         if is_class_hour:
             time_range = _class_hour_range(lesson, group)
@@ -122,12 +124,34 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
     lesson_times = get_lesson_times(day, faculty, course)
     
     for number, lesson, changed in items:
+        subject_raw = lesson.subject or "—"
+        if "орг. собрание" in subject_raw.lower():
+            org_line = "📌 <b>ОРГ. СОБРАНИЕ</b>"
+            if lesson.start_time:
+                if lesson.end_time:
+                    org_line += f" <code>{lesson.start_time}-{lesson.end_time}</code>"
+                else:
+                    org_line += f" <code>{lesson.start_time}</code>"
+            if lesson.room:
+                room_text = lesson.room
+                if room_text[:1].isdigit():
+                    room_text = "⁠" + room_text
+                org_line += f" 🚪{room_text}"
+            lines.append(org_line)
+            lines.append("")
+            continue
+
         emoji = NUMBER_EMOJI.get(number, f"{number}.")
         
         # Добавляем время пары
         time_str = ""
-        is_class_hour = "классный час" in (lesson.subject or "").lower()
-        if is_class_hour:
+        is_class_hour = "классный час" in subject_raw.lower()
+        if lesson.start_time:
+            if lesson.end_time:
+                time_str = f" <code>{lesson.start_time}-{lesson.end_time}</code>"
+            else:
+                time_str = f" <code>{lesson.start_time}</code>"
+        elif is_class_hour:
             emoji = "🕒"
             time_range = _class_hour_range(lesson, group)
             if time_range:
@@ -141,7 +165,7 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
         
         # «проф.ком», «проф.деят» Telegram принимает за адрес сайта и красит
         # синим. Невидимый знак после точки ломает автоопределение ссылки.
-        subject = re.sub(r"\.(?=[А-Яа-яA-Za-z])", ".⁠", lesson.subject or "—")
+        subject = re.sub(r"\.(?=[А-Яа-яA-Za-z])", ".⁠", subject_raw)
         lines.append(f"{emoji}{time_str} <b>{subject}</b>")
         
         # Преподаватель и кабинет в одной строке
@@ -174,6 +198,95 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
         if lesson.notes:
             lines.append(f"    📝 {lesson.notes}")
         lines.append("")
+    return "\n".join(lines).strip()
+
+
+WEEKDAY_SHORT = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+
+
+def _week_label(start: date, end: date) -> str:
+    if start.year == end.year:
+        return f"{start.strftime('%d.%m')}–{end.strftime('%d.%m.%Y')}"
+    return f"{start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')}"
+
+
+def _week_room(room: str) -> str:
+    text = room
+    if text[:1].isdigit():
+        text = "⁠" + text
+    return f"🚪{text}"
+
+
+def format_week_schedule(
+    group: str,
+    week_start: date,
+    faculty: str = "permskaya",
+    course: int | None = None,
+) -> str:
+    """Компактное расписание заочки на неделю (Пн–Сб) одним текстом."""
+    week_end = week_start + timedelta(days=5)
+    lines = [
+        f"📅 <b>Заочка, {_week_label(week_start, week_end)}</b>",
+        f"👨‍🎓 Группа: <b>{group}</b>",
+        "",
+        "⚠️ <i>Напоминание из расписания: студенты с финансовой "
+        "задолженностью к занятиям не допускаются.</i>",
+        "",
+    ]
+
+    has_any = False
+    for offset in range(6):
+        day = week_start + timedelta(days=offset)
+        items, _ = get_day_schedule(group, day, faculty, course)
+        lines.append(f"<b>{WEEKDAY_SHORT[day.weekday()]} {day.strftime('%d.%m')}</b>")
+        if not items:
+            lines.append("нет занятий")
+            lines.append("")
+            continue
+
+        has_any = True
+        lesson_times = get_lesson_times(day, faculty, course)
+        for number, lesson, _ in items:
+            subject_raw = lesson.subject or "—"
+            if "орг. собрание" in subject_raw.lower():
+                org_line = "📌 <b>ОРГ. СОБРАНИЕ</b>"
+                if lesson.start_time:
+                    if lesson.end_time:
+                        org_line += f" <code>{lesson.start_time}-{lesson.end_time}</code>"
+                    else:
+                        org_line += f" <code>{lesson.start_time}</code>"
+                if lesson.room:
+                    org_line += f" {_week_room(lesson.room)}"
+                lines.append(org_line)
+                continue
+
+            if lesson.start_time:
+                if lesson.end_time:
+                    time_text = f"{lesson.start_time}-{lesson.end_time}"
+                else:
+                    time_text = lesson.start_time
+            else:
+                time_range = get_lesson_time_range(lesson.source_file_id, group, number)
+                time_range = time_range or lesson_times.get(number)
+                time_text = f"{time_range[0]}-{time_range[1]}" if time_range else ""
+
+            emoji = NUMBER_EMOJI.get(number, f"{number}.")
+            subject = re.sub(r"\.(?=[А-Яа-яA-Za-z])", ".⁠", subject_raw)
+            line = f"{emoji}"
+            if time_text:
+                line += f" <code>{time_text}</code>"
+            line += f" <b>{subject}</b>"
+
+            if lesson.teacher:
+                line += f" — {lesson.teacher}"
+            if lesson.room:
+                room_text = _week_room(lesson.room)
+                line += f", {room_text}" if lesson.teacher else f" — {room_text}"
+            lines.append(line)
+        lines.append("")
+
+    if not has_any:
+        lines.append("На эту неделю расписание не найдено.")
     return "\n".join(lines).strip()
 
 

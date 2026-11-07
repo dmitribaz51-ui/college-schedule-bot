@@ -14,11 +14,15 @@ from aiogram.types import CallbackQuery, FSInputFile, Message
 from app.bot.handlers.bells import cleanup_bells_message
 from app.bot.keyboards.menu import (
     BTN_BELLS, BTN_PICK_DATE, BTN_TODAY, BTN_TOMORROW, main_menu,
-    pick_date_keyboard,
+    pick_date_keyboard, week_picker_keyboard,
 )
 from app.database import repository as repo
-from app.services.schedule_service import format_day_schedule, format_recent_changes
-from app.utils import parse_user_date, today_perm, tomorrow_perm
+from app.services.schedule_service import (
+    format_day_schedule,
+    format_recent_changes,
+    format_week_schedule,
+)
+from app.utils import is_part_time_group, parse_user_date, today_perm, tomorrow_perm
 
 logger = logging.getLogger(__name__)
 router = Router(name="schedule")
@@ -164,6 +168,149 @@ async def _send_schedule(message: Message, group: str, day, faculty: str, course
     await _send_schedule_text(message, schedule_text)
 
 
+async def _send_week_schedule(
+    message: Message,
+    group: str,
+    week_start,
+    faculty: str,
+    course: int | None,
+) -> None:
+    """Заочка: одно сообщение на неделю + PDF недели."""
+    schedule_text = format_week_schedule(group, week_start, faculty, course)
+    schedule_file = repo.get_group_week_file(group, week_start, faculty)
+    if not schedule_file or not schedule_file.local_path:
+        await _send_schedule_text(message, schedule_text)
+        return
+
+    file_path = Path(schedule_file.local_path)
+    if not file_path.exists():
+        await _send_schedule_text(message, schedule_text)
+        return
+
+    cached_file_id = schedule_file.telegram_file_id
+    doc_to_send = cached_file_id or FSInputFile(file_path)
+
+    async def _send_doc(caption: str | None = None):
+        nonlocal cached_file_id, doc_to_send
+        try:
+            sent = await message.answer_document(
+                document=doc_to_send,
+                caption=caption,
+            )
+            if sent and sent.document and not cached_file_id:
+                repo.set_file_telegram_id(schedule_file.id, sent.document.file_id)
+                cached_file_id = sent.document.file_id
+            return sent
+        except Exception as exc:
+            if cached_file_id:
+                logger.warning(
+                    "Не удалось отправить недельный PDF по file_id %s: %s",
+                    cached_file_id,
+                    exc,
+                )
+                doc_to_send = FSInputFile(file_path)
+                sent = await message.answer_document(
+                    document=doc_to_send,
+                    caption=caption,
+                )
+                if sent and sent.document:
+                    repo.set_file_telegram_id(schedule_file.id, sent.document.file_id)
+                    cached_file_id = sent.document.file_id
+                return sent
+            raise
+
+    if _telegram_length(_plain_schedule_text(schedule_text)) <= TELEGRAM_CAPTION_LIMIT:
+        try:
+            await _send_doc(caption=schedule_text)
+            return
+        except Exception as exc:
+            logger.warning("Не удалось отправить неделю с PDF: %s", exc)
+
+    await _send_schedule_text(message, schedule_text)
+    try:
+        await _send_doc(caption=None)
+    except Exception as exc:
+        logger.warning("Не удалось отправить PDF недели %s: %s", file_path, exc)
+
+
+async def ask_week(message: Message, state: FSMContext, selected: tuple) -> None:
+    """Экран выбора доступной недели для заочной группы."""
+    group, faculty, _course = selected
+    weeks = repo.get_group_weeks(group, faculty)
+    await state.clear()
+    if not weeks:
+        await message.answer(
+            "Расписание заочного отделения пока не загружено.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    today = today_perm()
+    index = next(
+        (i for i, (_start, end) in enumerate(weeks) if end >= today),
+        len(weeks) - 1,
+    )
+    await message.answer(
+        "📅 <b>Заочное отделение</b>\nВыберите неделю:",
+        reply_markup=week_picker_keyboard(weeks, index),
+    )
+
+
+@router.callback_query(F.data.startswith("weekpage:"))
+async def week_page(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        index = int((callback.data or "").removeprefix("weekpage:"))
+    except ValueError:
+        await callback.answer("Некорректная страница", show_alert=True)
+        return
+
+    selected = _user_group(callback.from_user.id)
+    if not selected or not is_part_time_group(selected[0]):
+        await callback.answer("Сначала выберите заочную группу — /start.", show_alert=True)
+        return
+
+    weeks = repo.get_group_weeks(selected[0], selected[1])
+    if not weeks:
+        await callback.answer("Недели пока не загружены", show_alert=True)
+        return
+    index = max(0, min(index, len(weeks) - 1))
+    await state.clear()
+    if callback.message is not None:
+        await callback.message.edit_text(
+            "📅 <b>Заочное отделение</b>\nВыберите неделю:",
+            reply_markup=week_picker_keyboard(weeks, index),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("week:"))
+async def open_week(callback: CallbackQuery, state: FSMContext) -> None:
+    from datetime import date as date_type
+
+    raw = (callback.data or "").removeprefix("week:")
+    try:
+        week_start = date_type.fromisoformat(raw)
+    except ValueError:
+        await callback.answer("Некорректная неделя", show_alert=True)
+        return
+
+    selected = _user_group(callback.from_user.id)
+    if not selected or not is_part_time_group(selected[0]):
+        await callback.answer("Сначала выберите заочную группу — /start.", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.answer()
+    if callback.message is not None:
+        await _send_week_schedule(
+            callback.message,
+            selected[0],
+            week_start,
+            selected[1],
+            selected[2],
+        )
+
+
 @router.message(F.text == BTN_TODAY)
 @router.message(Command("today"))
 async def show_today(message: Message, state: FSMContext) -> None:
@@ -209,6 +356,10 @@ async def ask_date(message: Message, state: FSMContext) -> None:
     await cleanup_bells_message(message, state)
     group = await _require_group(message)
     if not group:
+        return
+    # Заочка выбирает не дату, а доступную неделю; очное — как раньше.
+    if is_part_time_group(group[0]):
+        await ask_week(message, state, group)
         return
     dates = repo.available_dates(group[0], faculty=group[1])
     hint = ""

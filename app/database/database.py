@@ -34,6 +34,18 @@ def init_db(database_url: str) -> None:
                         "ADD COLUMN faculty VARCHAR(32) DEFAULT 'permskaya'"
                     )
                 )
+        lesson_columns = {
+            column["name"]
+            for column in inspect(_engine).get_columns("lessons")
+        }
+        if "start_time" not in lesson_columns:
+            connection.execute(
+                text("ALTER TABLE lessons ADD COLUMN start_time VARCHAR(5)")
+            )
+        if "end_time" not in lesson_columns:
+            connection.execute(
+                text("ALTER TABLE lessons ADD COLUMN end_time VARCHAR(5)")
+            )
         schedule_file_columns = {
             column["name"]
             for column in inspect(_engine).get_columns("schedule_files")

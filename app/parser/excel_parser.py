@@ -131,6 +131,8 @@ class ParsedLesson:
     teacher: str | None = None
     room: str | None = None
     notes: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -139,6 +141,8 @@ class ParsedLesson:
             "teacher": self.teacher or None,
             "room": self.room or None,
             "notes": self.notes or None,
+            "start_time": self.start_time or None,
+            "end_time": self.end_time or None,
         }
 
 

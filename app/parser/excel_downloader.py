@@ -34,7 +34,7 @@ class DownloadResult:
 def build_file_name(schedule_date: date | None, file_type: str, url: str) -> str:
     day = schedule_date.isoformat() if schedule_date else "unknown-date"
     suffix = Path(url.split("?")[0]).suffix.lower() or ".xlsx"
-    if suffix not in (".xlsx", ".xlsm", ".xls"):
+    if suffix not in (".xlsx", ".xlsm", ".xls", ".pdf"):
         suffix = ".xlsx"
     return f"{day}_{file_type}{suffix}"
 
@@ -98,3 +98,38 @@ async def download_excel(
     digest = hashlib.sha256(content).hexdigest()
     logger.info("Скачан файл %s (%s КБ, листы: %s)", path.name, size // 1024, sheet_names)
     return DownloadResult(path=path, size=size, sha256=digest, sheet_names=sheet_names)
+
+
+async def download_pdf(
+    url: str, dest_dir: Path, file_name: str, timeout: float = 90.0
+) -> DownloadResult:
+    """Скачивает PDF расписания заочки и проверяет сигнатуру."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=timeout, follow_redirects=True
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            content = response.content
+    except httpx.HTTPError as exc:
+        raise DownloadError(f"Ошибка сети при скачивании PDF: {exc}") from exc
+
+    size = len(content)
+    if size < MIN_FILE_SIZE:
+        raise DownloadError(f"PDF слишком маленький ({size} байт)")
+    if size > MAX_FILE_SIZE:
+        raise DownloadError(f"PDF слишком большой ({size} байт)")
+    if not content.startswith(b"%PDF"):
+        raise DownloadError("Файл не является PDF")
+
+    path = _unique_path(dest_dir, file_name)
+    try:
+        path.write_bytes(content)
+    except OSError as exc:
+        raise DownloadError(f"Не удалось сохранить PDF: {exc}") from exc
+
+    digest = hashlib.sha256(content).hexdigest()
+    logger.info("Скачан PDF %s (%s КБ)", path.name, size // 1024)
+    return DownloadResult(path=path, size=size, sha256=digest, sheet_names=[])
