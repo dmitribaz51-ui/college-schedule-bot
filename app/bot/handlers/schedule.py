@@ -21,8 +21,15 @@ from app.services.schedule_service import (
     format_day_schedule,
     format_recent_changes,
     format_week_schedule,
+    get_day_schedule,
 )
-from app.utils import is_part_time_group, parse_user_date, today_perm, tomorrow_perm
+from app.utils import (
+    human_date,
+    is_part_time_group,
+    parse_user_date,
+    today_perm,
+    tomorrow_perm,
+)
 
 logger = logging.getLogger(__name__)
 router = Router(name="schedule")
@@ -97,8 +104,84 @@ async def _send_schedule_text(message: Message, text: str) -> None:
         await message.answer("".join(chunk), parse_mode=None)
 
 
+def _part_time_week_label(start, end) -> str:
+    if start.year == end.year:
+        return f"{start.strftime('%d.%m')}–{end.strftime('%d.%m.%Y')}"
+    return f"{start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')}"
+
+
+def _part_time_week(group: str, day, faculty: str):
+    """Неделя заочки, в которую попадает день, либо ближайшая доступная."""
+    weeks = repo.get_group_weeks(group, faculty)
+    if not weeks:
+        return None
+
+    for start, end in weeks:
+        if start <= day <= end:
+            return start, end
+
+    future = [week for week in weeks if week[0] > day]
+    if future:
+        return min(future, key=lambda week: week[0])
+    return max(weeks, key=lambda week: week[1])
+
+
+async def _send_part_time_day(
+    message: Message,
+    group: str,
+    day,
+    faculty: str,
+    course: int | None,
+) -> None:
+    """Заочка: вместо одного дня показываем неделю и не цепляем Excel.
+
+    Если на выбранный день недели нет, честно пишем это и открываем
+    ближайшую (или последнюю загруженную) неделю. Отдельные inline-кнопки
+    для заочки не нужны: выбор другой недели остаётся в «Выбрать дату».
+    """
+    week = _part_time_week(group, day, faculty)
+    if week is None:
+        await message.answer(
+            "📅 <b>Заочное отделение</b>\n\n"
+            "Расписание заочки пока не загружено.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    start, end = week
+    intro = None
+    if not (start <= day <= end):
+        if start > day:
+            relation = "Ближайшая доступная"
+        else:
+            relation = "Последняя загруженная"
+        intro = (
+            f"На {human_date(day)} занятий нет.\n"
+            f"{relation} неделя заочки: {_part_time_week_label(start, end)}."
+        )
+    else:
+        items, _ = get_day_schedule(group, day, faculty, course)
+        if not items:
+            intro = f"На {human_date(day)} занятий нет. Ниже — вся неделя."
+
+    await _send_week_schedule(
+        message,
+        group,
+        start,
+        faculty,
+        course,
+        intro=intro,
+    )
+
+
 async def _send_schedule(message: Message, group: str, day, faculty: str, course: int | None) -> None:
     """Отправляет расписание и актуальный исходный файл (с кэшированием Telegram file_id), не обрезая текст."""
+    # У заочки нет ежедневного Excel: только недельный PDF. Поэтому любые
+    # «Сегодня/Завтра/дата» для группы «зо» ведут на недельный экран.
+    if is_part_time_group(group):
+        await _send_part_time_day(message, group, day, faculty, course)
+        return
+
     schedule_text = format_day_schedule(group, day, faculty, course)
     schedule_file = repo.get_schedule_file_for_group(day, group, faculty)
 
@@ -174,9 +257,13 @@ async def _send_week_schedule(
     week_start,
     faculty: str,
     course: int | None,
+    *,
+    intro: str | None = None,
 ) -> None:
     """Заочка: одно сообщение на неделю + PDF недели."""
     schedule_text = format_week_schedule(group, week_start, faculty, course)
+    if intro:
+        schedule_text = f"{intro}\n\n{schedule_text}"
     schedule_file = repo.get_group_week_file(group, week_start, faculty)
     if not schedule_file or not schedule_file.local_path:
         await _send_schedule_text(message, schedule_text)

@@ -12,6 +12,7 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import User as TelegramUser
 
+from app.bot.handlers import schedule as schedule_handler
 from app.bot.handlers.start import choose_course
 from app.bot.keyboards.menu import week_picker_keyboard
 from app.database import database as db
@@ -217,3 +218,92 @@ async def test_course_selection_explains_part_time_groups(memory_db):
         for button in row
     ]
     assert "Л-26-11 зо" in buttons
+
+
+@pytest.mark.anyio
+async def test_part_time_today_opens_week_without_excel(memory_db, monkeypatch):
+    repo.replace_group_lessons(
+        schedule_date=date(2026, 11, 9),
+        group_name="Л-25-11 зо",
+        source_type="schedule",
+        course=2,
+        lessons=[
+            {
+                "number": 4,
+                "subject": "Гражданское право",
+                "teacher": "Канюкова Сусанна Рауфовна",
+                "room": "308",
+                "start_time": "14:45",
+                "end_time": "16:10",
+            }
+        ],
+        faculty="permskaya",
+    )
+    # Если этот метод вызовется, значит для заочки снова пытаются прикрепить Excel.
+    monkeypatch.setattr(
+        schedule_handler.repo,
+        "get_schedule_file_for_group",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Excel для зо")),
+    )
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
+
+    await schedule_handler._send_schedule(
+        message, "Л-25-11 зо", date(2026, 11, 9), "permskaya", 2
+    )
+
+    message.answer_document.assert_not_awaited()
+    text = message.answer.call_args.args[0]
+    assert "Заочка, 09.11–14.11.2026" in text
+    assert "Гражданское право" in text
+    assert "Пн 09.11" in text
+
+
+@pytest.mark.anyio
+async def test_part_time_missing_day_shows_nearest_week(memory_db, monkeypatch):
+    repo.replace_group_lessons(
+        schedule_date=date(2026, 11, 9),
+        group_name="Л-25-11 зо",
+        source_type="schedule",
+        course=2,
+        lessons=[
+            {
+                "number": 4,
+                "subject": "Гражданское право",
+                "start_time": "14:45",
+                "end_time": "16:10",
+            }
+        ],
+        faculty="permskaya",
+    )
+    monkeypatch.setattr(
+        schedule_handler.repo,
+        "get_schedule_file_for_group",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Excel для зо")),
+    )
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
+
+    # Воскресенье 08.11: текущей недели заочки нет, ближайшая — 09.11.
+    await schedule_handler._send_schedule(
+        message, "Л-25-11 зо", date(2026, 11, 8), "permskaya", 2
+    )
+
+    message.answer_document.assert_not_awaited()
+    text = message.answer.call_args.args[0]
+    assert "занятий нет" in text
+    assert "Ближайшая доступная неделя заочки" in text
+    assert "09.11–14.11.2026" in text
+
+
+@pytest.mark.anyio
+async def test_part_time_without_weeks_says_not_loaded(memory_db):
+    repo.upsert_groups([("Л-24-9 зо", 3)], faculty="permskaya")
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
+
+    await schedule_handler._send_schedule(
+        message, "Л-24-9 зо", date(2026, 11, 9), "permskaya", 3
+    )
+
+    message.answer_document.assert_not_awaited()
+    text = message.answer.call_args.args[0]
+    assert "Расписание заочки пока не загружено" in text
+    assert message.answer.call_args.kwargs["reply_markup"] is not None
