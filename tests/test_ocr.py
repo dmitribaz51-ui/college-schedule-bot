@@ -252,6 +252,37 @@ def test_real_scan_26_10_uses_link_groups_and_valid_times():
     assert set(automation) == {
         "Автоматизация торгово-технологических процессов"
     }
+
+    saturday = next(
+        item for item in schedules
+        if item.group == "ТД-25-11 зо"
+        and item.schedule_date == date(2026, 10, 31)
+    )
+    saturday_by_number = {lesson.number: lesson for lesson in saturday.lessons}
+    assert (
+        saturday_by_number[5].start_time,
+        saturday_by_number[5].end_time,
+    ) == ("13:50", "14:50")
+    assert (
+        saturday_by_number[6].start_time,
+        saturday_by_number[6].end_time,
+    ) == ("15:00", "16:00")
+
+    monday = next(
+        item for item in schedules
+        if item.group == "ТД-25-11 зо"
+        and item.schedule_date == date(2026, 10, 26)
+    )
+    monday_by_number = {lesson.number: lesson for lesson in monday.lessons}
+    assert (
+        monday_by_number[5].start_time,
+        monday_by_number[5].end_time,
+    ) == ("16:30", "17:55")
+    assert (
+        monday_by_number[6].start_time,
+        monday_by_number[6].end_time,
+    ) == ("18:05", "19:30")
+
     for item in schedules:
         for lesson in item.lessons:
             if lesson.start_time and lesson.end_time:

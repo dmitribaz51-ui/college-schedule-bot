@@ -91,6 +91,36 @@ def init_db(database_url: str) -> None:
                 "AND error NOT LIKE 'Дубликат%'"
             )
         )
+        # Один раз перечитываем 26.10.2026: до исправления OCR склеивал
+        # 5-ю и 6-ю пары (13:50–16:00 вместо 13:50–14:50 / 15:00–16:00).
+        # Маркер в app_meta не даёт запускать тяжёлый OCR при каждом старте.
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS app_meta ("
+                "key TEXT PRIMARY KEY, value TEXT)"
+            )
+        )
+        applied = connection.execute(
+            text("SELECT value FROM app_meta WHERE key = :key"),
+            {"key": "ocr_time_fix_2026_11"},
+        ).scalar()
+        if applied is None:
+            connection.execute(
+                text(
+                    "UPDATE schedule_files "
+                    "SET processed = 0, error = NULL, last_checked = NULL "
+                    "WHERE faculty = 'zaochnoe' "
+                    "AND schedule_date = :day"
+                ),
+                {"day": "2026-10-26"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO app_meta (key, value) "
+                    "VALUES (:key, :value)"
+                ),
+                {"key": "ocr_time_fix_2026_11", "value": "1"},
+            )
         broadcast_columns = {
             column["name"]
             for column in inspect(_engine).get_columns("broadcasts")

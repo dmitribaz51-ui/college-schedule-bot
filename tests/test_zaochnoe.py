@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select, text
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -17,6 +18,7 @@ from app.bot.handlers.start import choose_course
 from app.bot.keyboards.menu import week_picker_keyboard
 from app.database import database as db
 from app.database import repository as repo
+from app.database.models import ScheduleFile
 from app.parser.pdf_parser import parse_pdf_file
 from app.parser.website_parser import parse_pdf_links_from_html
 from app.services.schedule_service import format_week_schedule
@@ -88,6 +90,45 @@ def test_startup_migration_fixes_trade_automation_subject(tmp_path):
     full_time = repo.get_lessons(day, "ТД-25-11", faculty="permskaya")
     assert zao[0].subject == "Автоматизация торгово-технологических процессов"
     assert full_time[0].subject == "Автоматизация горно-технологических процессов"
+
+
+def test_startup_resets_26_10_for_reocr_once(tmp_path):
+    """Старый 26.10 перечитывается один раз, а не при каждом рестарте."""
+    db_file = tmp_path / "bot.db"
+    url = f"sqlite:///{db_file.as_posix()}"
+    pdf_url = "https://example.test/zaochnoe/26.10.pdf"
+    db.init_db(url)
+    with db.get_session() as session:
+        # Первый init_db на пустой базе уже поставил маркер. Удаляем его,
+        # чтобы проверить именно сценарий «старая база с 26.10».
+        session.execute(
+            text("DELETE FROM app_meta WHERE key = 'ocr_time_fix_2026_11'")
+        )
+        session.add(
+            ScheduleFile(
+                title="Расписание 26.10-31.10.2026",
+                schedule_date=date(2026, 10, 26),
+                file_type="schedule",
+                url=pdf_url,
+                faculty="zaochnoe",
+                processed=True,
+            )
+        )
+
+    db.init_db(url)
+    with db.get_session() as session:
+        row = session.scalars(
+            select(ScheduleFile).where(ScheduleFile.url == pdf_url)
+        ).one()
+        assert not row.processed
+        row.processed = True
+
+    db.init_db(url)
+    with db.get_session() as session:
+        row = session.scalars(
+            select(ScheduleFile).where(ScheduleFile.url == pdf_url)
+        ).one()
+        assert row.processed
 
 
 def test_pdf_links_parser():

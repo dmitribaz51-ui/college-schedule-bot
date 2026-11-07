@@ -38,7 +38,7 @@ from app.parser.ocr_dictionaries import (
     parse_time_ranges,
     split_teacher_room,
 )
-from app.utils import course_from_group
+from app.utils import course_from_group, get_lesson_times
 
 logger = logging.getLogger(__name__)
 
@@ -578,6 +578,28 @@ def _pair_rows(
     return rows, org_starts
 
 
+def _overlapping_pair_rows(
+    rows: list[_PairRow], y0: int, y1: int, day: date
+) -> list[_PairRow]:
+    """Пары, с которыми ячейка реально пересекается, а не касается краем.
+
+    Границы ячеек и строк таблицы после OCR расходятся на несколько пикселей.
+    Старое условие «пересечение > 4 px» цепляло соседнюю пару, и одна ячейка
+    получала время двух пар (например, 13:50–16:00 вместо 13:50–14:50).
+    Берём пересечение не меньше 20% высоты строки: настоящая объединённая
+    ячейка даёт большой процент по каждой паре, а случайный край — нет.
+    """
+    selected: list[_PairRow] = []
+    for row in rows:
+        if row.day != day:
+            continue
+        overlap = min(y1, row.y1) - max(y0, row.y0)
+        threshold = max(4, int((row.y1 - row.y0) * 0.2))
+        if overlap >= threshold:
+            selected.append(row)
+    return selected
+
+
 def _cell_lesson(
     lines: list[OcrLine],
 ) -> tuple[str | None, str | None, str | None, bool]:
@@ -688,11 +710,9 @@ def _parse_page(
             )
             if day is None:
                 continue
-            overlapping = [
-                row for row in pair_rows
-                if row.day == day.date
-                and min(y1, row.y1) - max(y0, row.y0) > 4
-            ]
+            overlapping = _overlapping_pair_rows(
+                pair_rows, y0, y1, day.date
+            )
             if not overlapping:
                 continue
             box = (column.x0 + 3, y0 + 3, column.x1 - 3, y1 - 3)
@@ -733,7 +753,8 @@ def _parse_page(
             else:
                 if not numbers:
                     continue
-                number = min(numbers)
+                numbers = sorted(set(numbers))
+                number = numbers[0]
                 start = next(
                     (row.start for row in overlapping if row.start),
                     None,
@@ -744,6 +765,16 @@ def _parse_page(
                 )
                 if not start:
                     start = parse_single_time(cell.text)
+                # Время берём из официальных звонков, а OCR — только чтобы
+                # понять, одна это пара или объединённый блок из нескольких.
+                # Иначе OCR иногда склеивает соседнюю строку (13:50–16:00).
+                bells = get_lesson_times(day.date, faculty="permskaya")
+                expected_start = bells.get(number)
+                expected_end = bells.get(numbers[-1])
+                if expected_start:
+                    start = expected_start[0]
+                if expected_end:
+                    end = expected_end[1]
                 if start and end and start > end:
                     # OCR перепутал начало и конец; не показываем «19:20-15:30».
                     start, end = end, start
