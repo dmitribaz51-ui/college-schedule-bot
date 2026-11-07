@@ -47,6 +47,13 @@ def test_teacher_correction_uses_surname_only_when_unambiguous():
 def test_subject_and_room_correction():
     assert correct_subject("у Математика") == "Математика"
     assert correct_subject("Основы финансовой грамотности") == "Основы финансовой грамотности"
+    # Для торговых групп: «торгово», а не «горно».
+    assert correct_subject(
+        "Автоматизация торгово-технологических процессов"
+    ) == "Автоматизация торгово-технологических процессов"
+    assert correct_subject(
+        "Автоматизация горно-технологических процессов"
+    ) == "Автоматизация торгово-технологических процессов"
     assert find_known_subject("ерунда Иностранный язык в профессиональной деятельности") == (
         "Иностранный язык в профессиональной деятельности"
     )
@@ -235,6 +242,16 @@ def test_real_scan_26_10_uses_link_groups_and_valid_times():
     assert any(
         lesson.subject == "Экономика организации" for lesson in tuesday.lessons
     )
+    automation = [
+        lesson.subject
+        for item in schedules
+        for lesson in item.lessons
+        if "Автоматизация" in (lesson.subject or "")
+    ]
+    assert automation
+    assert set(automation) == {
+        "Автоматизация торгово-технологических процессов"
+    }
     for item in schedules:
         for lesson in item.lessons:
             if lesson.start_time and lesson.end_time:

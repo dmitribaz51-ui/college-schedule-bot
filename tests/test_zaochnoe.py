@@ -51,6 +51,45 @@ def test_course_from_group():
     assert course_from_group("Л-24-11 зо", date(2027, 2, 15)) == 3
 
 
+def test_startup_migration_fixes_trade_automation_subject(tmp_path):
+    """Старые заочные строки «горно» должны стать «торгово», очные — нет."""
+    db_file = tmp_path / "bot.db"
+    url = f"sqlite:///{db_file.as_posix()}"
+    db.init_db(url)
+    day = date(2026, 10, 26)
+    repo.replace_group_lessons(
+        schedule_date=day,
+        group_name="ТД-25-11 зо",
+        source_type="schedule",
+        course=2,
+        lessons=[
+            {
+                "number": 4,
+                "subject": "Автоматизация горно-технологических процессов",
+            }
+        ],
+    )
+    repo.replace_group_lessons(
+        schedule_date=day,
+        group_name="ТД-25-11",
+        source_type="schedule",
+        course=2,
+        lessons=[
+            {
+                "number": 4,
+                "subject": "Автоматизация горно-технологических процессов",
+            }
+        ],
+    )
+
+    db.init_db(url)
+
+    zao = repo.get_lessons(day, "ТД-25-11 зо", faculty="permskaya")
+    full_time = repo.get_lessons(day, "ТД-25-11", faculty="permskaya")
+    assert zao[0].subject == "Автоматизация торгово-технологических процессов"
+    assert full_time[0].subject == "Автоматизация горно-технологических процессов"
+
+
 def test_pdf_links_parser():
     html = """
     <a href="/files/zaochnoe/09.11.pdf">
