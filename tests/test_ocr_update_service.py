@@ -1,7 +1,7 @@
 """Интеграция OCR в обработку PDF заочки."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -108,7 +108,7 @@ async def test_missing_tesseract_keeps_pdf_and_reports_error(
     assert "OCR недоступен" in report.errors[0]
     saved = repo.get_file_by_url("https://example.test/19.10.pdf")
     assert saved is not None
-    assert saved.processed is True
+    assert saved.processed is False
     assert "OCR недоступен" in (saved.error or "")
 
 
@@ -135,3 +135,90 @@ async def test_text_pdf_does_not_call_ocr(memory_db, monkeypatch, tmp_path):
 
     assert report.errors == []
     assert len(report.new_files) == 1
+
+
+@pytest.mark.anyio
+async def test_failed_scan_is_retried_after_error(memory_db, monkeypatch, tmp_path):
+    async def fake_download(url, dest_dir, file_name):
+        return DownloadResult(
+            path=tmp_path / "scan.pdf",
+            size=1000,
+            sha256="retry-hash",
+            sheet_names=[],
+        )
+
+    monkeypatch.setattr(us, "download_pdf", fake_download)
+    monkeypatch.setattr(us, "parse_pdf_file", lambda path: [])
+    monkeypatch.setattr(us, "is_ocr_available", lambda: False)
+    monkeypatch.setattr(us, "ocr_unavailable_reason", lambda: "нет tesseract")
+
+    first = us.UpdateReport()
+    await us._process_pdf_link(_scan_link(), first, force_reprocess=True)
+    saved = repo.get_file_by_url("https://example.test/19.10.pdf")
+    assert saved is not None
+    assert saved.processed is False
+    assert "OCR недоступен" in (saved.error or "")
+
+    # Tesseract появился: тот же URL и тот же хэш должны перечитаться,
+    # а не остаться навсегда «обработанными».
+    monkeypatch.setattr(us, "is_ocr_available", lambda: True)
+    monkeypatch.setattr(us, "parse_scanned_pdf", lambda *a, **k: [_schedule()])
+    monkeypatch.setattr(us, "PDF_RETRY_AFTER", timedelta(0))
+
+    second = us.UpdateReport()
+    await us._process_pdf_link(_scan_link(), second)
+
+    assert second.errors == []
+    assert len(second.new_files) == 1
+    saved = repo.get_file_by_url("https://example.test/19.10.pdf")
+    assert saved is not None
+    assert saved.processed is True
+    assert saved.error is None
+
+
+@pytest.mark.anyio
+async def test_old_failed_scan_with_processed_flag_is_retried(
+    memory_db, monkeypatch, tmp_path
+):
+    """Так выглядели сканы 2027 после первого запуска без Tesseract."""
+    repo.upsert_file(
+        title="Расписание 15.02-20.02.2027",
+        url="https://example.test/15.02.pdf",
+        file_type="schedule",
+        faculty="zaochnoe",
+        schedule_date=date(2027, 2, 15),
+        file_hash="legacy-hash",
+        processed=True,
+        error="PDF без текста, OCR недоступен: нет tesseract",
+    )
+
+    async def fake_download(url, dest_dir, file_name):
+        return DownloadResult(
+            path=tmp_path / "scan.pdf",
+            size=1000,
+            sha256="legacy-hash",
+            sheet_names=[],
+        )
+
+    monkeypatch.setattr(us, "download_pdf", fake_download)
+    monkeypatch.setattr(us, "parse_pdf_file", lambda path: [])
+    monkeypatch.setattr(us, "is_ocr_available", lambda: True)
+    monkeypatch.setattr(us, "parse_scanned_pdf", lambda *a, **k: [_schedule()])
+
+    report = us.UpdateReport()
+    await us._process_pdf_link(
+        ScheduleLink(
+            title="Расписание 15.02-20.02.2027",
+            file_type="schedule",
+            schedule_date=date(2027, 2, 15),
+            url="https://example.test/15.02.pdf",
+        ),
+        report,
+    )
+
+    assert report.errors == []
+    assert len(report.new_files) == 1
+    saved = repo.get_file_by_url("https://example.test/15.02.pdf")
+    assert saved is not None
+    assert saved.processed is True
+    assert saved.error is None

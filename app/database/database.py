@@ -64,6 +64,19 @@ def init_db(database_url: str) -> None:
                     "ADD COLUMN telegram_file_id VARCHAR(255)"
                 )
             )
+        # Заочные PDF, которые упали до включения OCR или после смены парсера,
+        # не должны навсегда оставаться «обработанными». Сбрасываем им статус
+        # и время проверки: первый же цикл перечитает файл. Повторные неудачи
+        # ограничены PDF_RETRY_AFTER в update_service.
+        connection.execute(
+            text(
+                "UPDATE schedule_files "
+                "SET processed = 0, last_checked = NULL "
+                "WHERE faculty = 'zaochnoe' "
+                "AND error IS NOT NULL "
+                "AND error NOT LIKE 'Дубликат%'"
+            )
+        )
         broadcast_columns = {
             column["name"]
             for column in inspect(_engine).get_columns("broadcasts")

@@ -1,9 +1,10 @@
 """ШАГ 12/18: проверка сайта, поиск новых файлов, скачивание, разбор, сохранение."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app.config import get_config
 from app.database import repository as repo
@@ -30,6 +31,19 @@ from app.services.notification_service import notify_about_schedule_update
 from app.utils import course_from_group, detect_faculty, today_perm
 
 logger = logging.getLogger(__name__)
+
+# Неудачный разбор PDF не должен блокировать файл навсегда. Повторяем
+# попытку не чаще раза в 6 часов; при рестарте init_db сбрасывает
+# last_checked у заочных файлов с ошибкой, чтобы они перечитались сразу.
+PDF_RETRY_AFTER = timedelta(hours=6)
+
+
+def _pdf_error_is_retryable(error: str | None) -> bool:
+    """Ошибка разбора/OCR, которую имеет смысл повторить.
+
+    «Дубликат» — финальный статус: такой файл уже разобран под другим URL.
+    """
+    return bool(error) and not error.startswith("Дубликат")
 
 
 @dataclass
@@ -192,6 +206,21 @@ async def _process_pdf_link(
     file_name = build_file_name(link.schedule_date, link.file_type, link.url)
     pdf_dir = config.pdf_dir / "zaochnoe"
 
+    existing = repo.get_file_by_url(link.url)
+    # Не долбим OCR/сеть каждые 15 минут, если файл уже падал с ошибкой.
+    # После рестарта/обновления кода init_db обнуляет last_checked у таких
+    # файлов, поэтому новая версия парсера сразу получает повторный шанс.
+    if (
+        existing
+        and _pdf_error_is_retryable(existing.error)
+        and existing.last_checked
+        and not (existing.error or "").startswith("Ошибка сети")
+        and not force_reprocess
+        and datetime.now() - existing.last_checked < PDF_RETRY_AFTER
+    ):
+        report.skipped += 1
+        return
+
     try:
         downloaded = await download_pdf(link.url, pdf_dir, file_name)
     except DownloadError as exc:
@@ -209,16 +238,12 @@ async def _process_pdf_link(
         logger.error("PDF не скачан (%s): %s", link.title, exc)
         return
 
-    existing = repo.get_file_by_url(link.url)
-    # Старые сканы были помечены «нужен OCR». После включения OCR даём
-    # им один шанс, иначе они никогда не перечитаются.
-    ocr_pending = bool(existing and existing.error and "нужен OCR" in existing.error)
     if (
         existing
         and existing.file_hash == downloaded.sha256
         and existing.processed
+        and not _pdf_error_is_retryable(existing.error)
         and not force_reprocess
-        and not ocr_pending
     ):
         # Файл не изменился: не парсим и не OCR-им повторно каждые 25 минут.
         repo.upsert_file(
@@ -303,7 +328,8 @@ async def _process_pdf_link(
             ocr_error = f"PDF без текста, OCR недоступен: {reason}"
         else:
             try:
-                schedules = parse_scanned_pdf(
+                schedules = await asyncio.to_thread(
+                    parse_scanned_pdf,
                     downloaded.path,
                     default_groups=link.groups,
                     default_date=link.schedule_date,
@@ -326,7 +352,7 @@ async def _process_pdf_link(
             schedule_date=link.schedule_date,
             file_hash=downloaded.sha256,
             local_path=str(downloaded.path),
-            processed=True,
+            processed=False,
             error=error,
             update_check_time=True,
         )
