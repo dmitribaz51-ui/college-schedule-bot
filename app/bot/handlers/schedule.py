@@ -110,9 +110,15 @@ def _part_time_week_label(start, end) -> str:
     return f"{start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')}"
 
 
-def _part_time_week(group: str, day, faculty: str):
-    """Неделя заочки, в которую попадает день, либо ближайшая доступная."""
-    weeks = repo.get_group_weeks(group, faculty)
+def _part_time_week(group: str, day, faculty: str, weeks=None):
+    """Неделя заочки, в которую попадает день, либо ближайшая будущая.
+
+    Прошедшую неделю автоматически не подставляем: 26.10 в ноябре — это
+    уже история, а не «расписание на сегодня». История доступна через
+    «Выбрать дату».
+    """
+    if weeks is None:
+        weeks = repo.get_group_weeks(group, faculty)
     if not weeks:
         return None
 
@@ -123,7 +129,7 @@ def _part_time_week(group: str, day, faculty: str):
     future = [week for week in weeks if week[0] > day]
     if future:
         return min(future, key=lambda week: week[0])
-    return max(weeks, key=lambda week: week[1])
+    return None
 
 
 async def _send_part_time_day(
@@ -136,14 +142,23 @@ async def _send_part_time_day(
     """Заочка: вместо одного дня показываем неделю и не цепляем Excel.
 
     Если на выбранный день недели нет, честно пишем это и открываем
-    ближайшую (или последнюю загруженную) неделю. Отдельные inline-кнопки
-    для заочки не нужны: выбор другой недели остаётся в «Выбрать дату».
+    ближайшую будущую неделю. Если будущих недель нет, не показываем
+    старую прошедшую, а говорим, что следующая сессия ещё не опубликована.
+    Отдельные inline-кнопки для заочки не нужны: выбор другой недели
+    остаётся в «Выбрать дату».
     """
-    week = _part_time_week(group, day, faculty)
+    weeks = repo.get_group_weeks(group, faculty)
+    week = _part_time_week(group, day, faculty, weeks=weeks)
     if week is None:
+        if weeks:
+            text = (
+                f"На {human_date(day)} занятий нет.\n"
+                "Следующая сессия заочки для вашей группы ещё не опубликована."
+            )
+        else:
+            text = "Расписание заочки пока не загружено."
         await message.answer(
-            "📅 <b>Заочное отделение</b>\n\n"
-            "Расписание заочки пока не загружено.",
+            f"📅 <b>Заочное отделение</b>\n\n{text}",
             reply_markup=main_menu(),
         )
         return
@@ -151,13 +166,9 @@ async def _send_part_time_day(
     start, end = week
     intro = None
     if not (start <= day <= end):
-        if start > day:
-            relation = "Ближайшая доступная"
-        else:
-            relation = "Последняя загруженная"
         intro = (
             f"На {human_date(day)} занятий нет.\n"
-            f"{relation} неделя заочки: {_part_time_week_label(start, end)}."
+            f"Ближайшая доступная неделя заочки: {_part_time_week_label(start, end)}."
         )
     else:
         items, _ = get_day_schedule(group, day, faculty, course)

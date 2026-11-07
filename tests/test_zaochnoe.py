@@ -295,6 +295,44 @@ async def test_part_time_missing_day_shows_nearest_week(memory_db, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_part_time_does_not_show_stale_past_week(memory_db, monkeypatch):
+    repo.replace_group_lessons(
+        schedule_date=date(2026, 10, 26),
+        group_name="Л-25-11 зо",
+        source_type="schedule",
+        course=2,
+        lessons=[
+            {
+                "number": 4,
+                "subject": "Гражданское право",
+                "start_time": "14:45",
+                "end_time": "16:10",
+            }
+        ],
+        faculty="permskaya",
+    )
+    monkeypatch.setattr(
+        schedule_handler.repo,
+        "get_schedule_file_for_group",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Excel для зо")),
+    )
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
+
+    # 08.11, а последняя загруженная неделя — 26.10. Показывать её как
+    # «расписание на сегодня» нельзя: следующая сессия ещё не опубликована.
+    await schedule_handler._send_schedule(
+        message, "Л-25-11 зо", date(2026, 11, 8), "permskaya", 2
+    )
+
+    message.answer_document.assert_not_awaited()
+    text = message.answer.call_args.args[0]
+    assert "занятий нет" in text
+    assert "Следующая сессия заочки" in text
+    assert "26.10" not in text
+    assert "Последняя загруженная" not in text
+
+
+@pytest.mark.anyio
 async def test_part_time_without_weeks_says_not_loaded(memory_db):
     repo.upsert_groups([("Л-24-9 зо", 3)], faculty="permskaya")
     message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
