@@ -15,6 +15,12 @@ from app.parser.excel_downloader import (
 )
 from app.parser.excel_parser import parse_excel_file
 from app.parser.pdf_parser import parse_pdf_file
+from app.parser.pdf_ocr import (
+    OcrUnavailable,
+    is_ocr_available,
+    ocr_unavailable_reason,
+    parse_scanned_pdf,
+)
 from app.parser.website_parser import (
     ScheduleLink,
     fetch_pdf_schedule_links,
@@ -204,11 +210,15 @@ async def _process_pdf_link(
         return
 
     existing = repo.get_file_by_url(link.url)
+    # Старые сканы были помечены «нужен OCR». После включения OCR даём
+    # им один шанс, иначе они никогда не перечитаются.
+    ocr_pending = bool(existing and existing.error and "нужен OCR" in existing.error)
     if (
         existing
         and existing.file_hash == downloaded.sha256
         and existing.processed
         and not force_reprocess
+        and not ocr_pending
     ):
         # Файл не изменился: не парсим и не OCR-им повторно каждые 25 минут.
         repo.upsert_file(
@@ -284,8 +294,30 @@ async def _process_pdf_link(
         logger.exception("Ошибка разбора PDF %s", downloaded.path)
         return
 
+    ocr_error: str | None = None
     if not schedules:
-        # Скан без текстового слоя. Файл уже сохранён — позже его заберёт OCR.
+        # Скан без текстового слоя — пробуем OCR. Если Tesseract нет или
+        # ячейки не сошлись, оставляем PDF и честно пишем об ошибке.
+        if not is_ocr_available():
+            reason = ocr_unavailable_reason() or "Tesseract не установлен"
+            ocr_error = f"PDF без текста, OCR недоступен: {reason}"
+        else:
+            try:
+                schedules = parse_scanned_pdf(
+                    downloaded.path,
+                    default_groups=link.groups,
+                    default_date=link.schedule_date,
+                )
+            except OcrUnavailable as exc:
+                ocr_error = f"OCR недоступен: {exc}"
+            except Exception as exc:
+                ocr_error = f"Ошибка OCR: {exc}"
+                logger.exception("Ошибка OCR PDF %s", downloaded.path)
+            if not schedules and not ocr_error:
+                ocr_error = "OCR не распознал ни одной группы"
+
+    if not schedules:
+        error = ocr_error or "Не удалось распознать PDF"
         repo.upsert_file(
             title=link.title,
             url=link.url,
@@ -295,10 +327,10 @@ async def _process_pdf_link(
             file_hash=downloaded.sha256,
             local_path=str(downloaded.path),
             processed=True,
-            error="PDF без текстового слоя (нужен OCR)",
+            error=error,
             update_check_time=True,
         )
-        report.errors.append(f"{link.title}: PDF без текстового слоя (нужен OCR)")
+        report.errors.append(f"{link.title}: {error}")
         return
 
     saved_groups: list[str] = []
@@ -316,8 +348,9 @@ async def _process_pdf_link(
             faculty=group_faculty,
         )
         saved_lessons += saved_count
-        saved_groups.append(schedule.group)
-        if changed:
+        if schedule.group not in saved_groups:
+            saved_groups.append(schedule.group)
+        if changed and schedule.group not in changed_groups:
             changed_groups.append(schedule.group)
         repo.upsert_groups(
             [(schedule.group, schedule.course)],

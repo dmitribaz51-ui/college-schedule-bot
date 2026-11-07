@@ -90,7 +90,9 @@ def _page_blocks(page) -> dict[int, tuple[str, float | None]]:
             fonts["/" + name.strip("/")] = (font.get("/Subtype"), cmap)
 
     contents = page.get_contents()
-    content = contents.get_data().decode("latin-1") if contents else ""
+    # ContentStream — это словарь без ключей, поэтому bool(contents) == False.
+    # Проверяем именно None, иначе pypdf 7 отдаёт пустой текст.
+    content = contents.get_data().decode("latin-1") if contents is not None else ""
     blocks: dict[int, tuple[str, float | None]] = {}
 
     for match in re.finditer(r"/P\s*<<([^>]*)>>\s*BDC(.*?)EMC", content, re.S):
