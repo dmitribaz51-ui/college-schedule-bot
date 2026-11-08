@@ -85,6 +85,21 @@ TEACHER_RE = re.compile(
 ROOM_KEYWORD_RE = re.compile(
     r"(?:каб\.?|ауд\.?|кабинет|аудитория)\s*№?\s*([\w/\-]{1,10})", re.IGNORECASE
 )
+# В одной ячейке может быть несколько подгрупп:
+# «Курсовой проект … Мишарина С.А. каб.106А/ Баталова Ю.П. каб.303/ …».
+# Пары храним в тех же полях teacher/room, разделяя их « | »: так не нужна
+# миграция БД, а формат остаётся читаемым при отладке.
+MULTI_PAIR_SEP = " | "
+TEACHER_ROOM_PAIR_RE = re.compile(
+    rf"(?P<teacher>{TEACHER_RE.pattern})\s*"
+    r"(?:,|/)?\s*"
+    r"(?:каб\.?|ауд\.?|кабинет|аудитория)\s*№?\s*"
+    r"(?P<room>[0-9]{1,3}[А-Яа-яA-Za-z]?)",
+    re.IGNORECASE,
+)
+ROOM_KEYWORD_COUNT_RE = re.compile(
+    r"(?:каб\.?|ауд\.?|кабинет|аудитория)\s*№?", re.IGNORECASE
+)
 ROOM_SPECIAL_RE = re.compile(
     r"((?:(?:верхний|нижний|малый|большой)\s+)?"
     r"(?:спортивный\s+зал|спорт\s*зал|тренаж[её]рный\s+зал)"
@@ -122,6 +137,30 @@ def normalize_subject_room(
     if not cleaned:
         return subject, room
     return cleaned, f"{trailing} & {room}"
+
+
+def split_teacher_room_pairs(
+    teacher: str | None, room: str | None
+) -> list[tuple[str, str]] | None:
+    """Разбирает несколько пар «преподаватель + кабинет» из полей урока.
+
+    Пара хранится в тех же полях, что и одиночный преподаватель/кабинет:
+    ``teacher == "Мишарина С.А. | Баталова Ю.П."``,
+    ``room == "106А | 303"``. Если разделителя нет, возвращает ``None`` —
+    значит, это обычный урок с одной парой.
+    """
+    if not teacher or not room:
+        return None
+    if MULTI_PAIR_SEP not in teacher or MULTI_PAIR_SEP not in room:
+        return None
+
+    teachers = [part.strip() for part in teacher.split(MULTI_PAIR_SEP)]
+    rooms = [part.strip() for part in room.split(MULTI_PAIR_SEP)]
+    if len(teachers) < 2 or len(teachers) != len(rooms):
+        return None
+    if any(not part for part in teachers) or any(not part for part in rooms):
+        return None
+    return list(zip(teachers, rooms))
 
 
 @dataclass
@@ -258,6 +297,42 @@ def _cell_texts(row: list[str], start: int, end: int, group: str) -> list[str]:
     return texts
 
 
+def _extract_teacher_room_pairs(text: str) -> tuple[str, str, str] | None:
+    """Достаёт несколько пар «преподаватель + кабинет» из одной ячейки.
+
+    Возвращает ``(subject, teacher, room)``, где teacher/room — списки через
+    ``MULTI_PAIR_SEP``. Если пар меньше двух или остались неразобранные
+    ``каб.``, возвращает ``None``: пусть работает старый разбор одиночной пары.
+    """
+    matches = list(TEACHER_ROOM_PAIR_RE.finditer(text))
+    if len(matches) < 2:
+        return None
+    # Если в тексте есть ещё «каб.», которые не попали в пары, не рискуем
+    # потерять кабинет и отдаём ячейку старому разбору.
+    if len(ROOM_KEYWORD_COUNT_RE.findall(text)) != len(matches):
+        return None
+
+    pairs: list[tuple[str, str]] = []
+    for match in matches:
+        pair = (
+            _clean(match.group("teacher")).replace(" .", ".").replace(". ", "."),
+            _clean(match.group("room")),
+        )
+        if pair not in pairs:
+            pairs.append(pair)
+    if len(pairs) < 2:
+        return None
+
+    subject = _clean(TEACHER_ROOM_PAIR_RE.sub(" ", text)).strip(" /-–—,;.")
+    if not subject:
+        return None
+    return (
+        subject,
+        MULTI_PAIR_SEP.join(teacher for teacher, _ in pairs),
+        MULTI_PAIR_SEP.join(room for _, room in pairs),
+    )
+
+
 def split_lesson_text(text: str) -> ParsedLesson:
     """Разбирает текст пары на предмет / преподавателя / кабинет / примечание."""
     original = _clean(text)
@@ -270,6 +345,28 @@ def split_lesson_text(text: str) -> ParsedLesson:
     if start_match:
         start_note = f"с {int(start_match.group(1)):02d}:{start_match.group(2)}"
         rest = rest[start_match.end():]
+
+    # В одной ячейке может быть несколько подгрупп, каждая со своим
+    # преподавателем и кабинетом. Разбираем их до обычной логики, иначе
+    # останется только первая пара, а фамилии попадут в название предмета.
+    multi = _extract_teacher_room_pairs(rest)
+    if multi is not None:
+        subject, teacher, room = multi
+        notes = start_note
+        match = NOTES_RE.search(subject)
+        if match:
+            extra = _clean(match.group(1))
+            notes = f"{notes}; {extra}" if notes else extra
+            subject = _clean(
+                subject[: match.start()] + " " + subject[match.end():]
+            ).strip(" /-–—,;.")
+        return ParsedLesson(
+            number=0,
+            subject=subject or None,
+            teacher=teacher,
+            room=room,
+            notes=notes,
+        )
 
     teacher = None
     match = TEACHER_RE.search(rest)
@@ -309,7 +406,9 @@ def split_lesson_text(text: str) -> ParsedLesson:
     if not room:
         match = ROOM_KEYWORD_RE.search(rest)
         if match:
-            room = _clean(match.group(1))
+            # В char-классе regex есть «/», поэтому «каб.106А/» захватывает
+            # хвостовой слэш. В кабинете он не нужен.
+            room = _clean(match.group(1)).strip(" /,;.")
             rest = rest[: match.start()] + " " + rest[match.end():]
         else:
             match = ROOM_SPECIAL_RE.search(rest)

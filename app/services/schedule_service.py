@@ -6,7 +6,12 @@ from copy import copy
 from datetime import date, timedelta
 
 from app.database import repository as repo
-from app.parser.excel_parser import MIDDAY_CLASS_HOUR, normalize_subject_room, split_lesson_text
+from app.parser.excel_parser import (
+    MIDDAY_CLASS_HOUR,
+    normalize_subject_room,
+    split_lesson_text,
+    split_teacher_room_pairs,
+)
 from app.services.bell_times import get_lesson_time_range
 from app.services.class_hour import get_class_hour_range
 from app.utils import human_date, get_lesson_times
@@ -15,6 +20,57 @@ NUMBER_EMOJI = {
     0: "0️⃣", 1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣",
     5: "5️⃣", 6: "6️⃣", 7: "7️⃣", 8: "8️⃣",
 }
+
+
+def _room_emoji(room: str, faculty: str) -> str:
+    room_low = room.lower()
+    if faculty == "chernyshevskogo" and "тренаж" in room_low:
+        return "🏋️‍♂️"
+    if "спорт" in room_low or room_low == "с/з":
+        return "🏓"
+    return "🚪"
+
+
+def _room_text(room: str) -> str:
+    """Невидимый знак перед цифрой, чтобы Telegram не делал телефонную ссылку."""
+    return ("⁠" + room) if room[:1].isdigit() else room
+
+
+def _teacher_room_groups(
+    teacher: str | None, room: str | None
+) -> list[tuple[str | None, str | None]]:
+    """Группирует несколько пар по кабинету: «106А — Мишарина, Омелина».
+
+    Для обычного урока с одной парой возвращает её как есть — вывод не меняется.
+    """
+    pairs = split_teacher_room_pairs(teacher, room)
+    if not pairs:
+        return [(teacher, room)] if (teacher or room) else []
+
+    grouped: dict[str, list[str]] = {}
+    for pair_teacher, pair_room in pairs:
+        grouped.setdefault(pair_room, []).append(pair_teacher)
+    return [(', '.join(names), pair_room) for pair_room, names in grouped.items()]
+
+
+def _day_teacher_room_lines(
+    teacher: str | None, room: str | None, faculty: str
+) -> list[str]:
+    groups = _teacher_room_groups(teacher, room)
+    # Для нескольких подгрупп пробелы вокруг «/» читаются заметно легче;
+    # одиночную пару оставляем в прежнем формате «Преподаватель/кабинет».
+    separator = " / " if len(groups) > 1 else "/"
+    lines: list[str] = []
+    for group_teacher, group_room in groups:
+        parts: list[str] = []
+        if group_teacher:
+            parts.append(group_teacher)
+        if group_room:
+            parts.append(f"{_room_text(group_room)}{_room_emoji(group_room, faculty)}")
+        if parts:
+            lines.append(separator.join(parts))
+    return lines
+
 
 # Время классного часа, если его не удалось вытащить из исходного файла (.xls):
 # 0 — утренний, 90 — классный час середины дня (14:10-14:45).
@@ -168,32 +224,10 @@ def format_day_schedule(group: str, day: date, faculty: str = "permskaya", cours
         subject = re.sub(r"\.(?=[А-Яа-яA-Za-z])", ".⁠", subject_raw)
         lines.append(f"{emoji}{time_str} <b>{subject}</b>")
         
-        # Преподаватель и кабинет в одной строке
-        if lesson.teacher or lesson.room:
-            teacher_room_parts = []
-            
-            if lesson.teacher:
-                teacher_room_parts.append(lesson.teacher)
-            
-            if lesson.room:
-                room_low = lesson.room.lower()
-                if faculty == "chernyshevskogo" and "тренаж" in room_low:
-                    room_emoji = "🏋️‍♂️"
-                elif "спорт" in room_low or room_low == "с/з":
-                    room_emoji = "🏓"
-                else:
-                    room_emoji = "🚪"
-                # Telegram сам делает из голого номера кабинета телефонную ссылку
-                # («410» открывается как набор номера). Невидимый знак внутри
-                # номера ломает автоопределение, а цвет текста остаётся обычным.
-                room_text = lesson.room
-                if room_text[:1].isdigit():
-                    room_text = "⁠" + room_text
-                teacher_room_parts.append(f"{room_text}{room_emoji}")
-            
-            # Соединяем преподавателя и кабинет через /
-            teacher_room_line = "/".join(teacher_room_parts)
-            lines.append(teacher_room_line)
+        # Преподаватель и кабинет в одной строке. Если в ячейке было
+        # несколько подгрупп, выводим по строке на кабинет:
+        # «Мишарина С.А., Омелина И.Л. / 106А», «Баталова Ю.П. / 303» …
+        lines.extend(_day_teacher_room_lines(lesson.teacher, lesson.room, faculty))
         
         if lesson.notes:
             lines.append(f"    📝 {lesson.notes}")
@@ -277,12 +311,26 @@ def format_week_schedule(
                 line += f" <code>{time_text}</code>"
             line += f" <b>{subject}</b>"
 
-            if lesson.teacher:
-                line += f" — {lesson.teacher}"
-            if lesson.room:
-                room_text = _week_room(lesson.room)
-                line += f", {room_text}" if lesson.teacher else f" — {room_text}"
-            lines.append(line)
+            groups = _teacher_room_groups(lesson.teacher, lesson.room)
+            if len(groups) > 1:
+                # Несколько подгрупп: пары идут отдельными строками под парой,
+                # чтобы не растягивать одну строку на весь экран.
+                lines.append(line)
+                for group_teacher, group_room in groups:
+                    detail_parts: list[str] = []
+                    if group_teacher:
+                        detail_parts.append(group_teacher)
+                    if group_room:
+                        detail_parts.append(_week_room(group_room))
+                    if detail_parts:
+                        lines.append("   " + " — ".join(detail_parts))
+            else:
+                if lesson.teacher:
+                    line += f" — {lesson.teacher}"
+                if lesson.room:
+                    room_text = _week_room(lesson.room)
+                    line += f", {room_text}" if lesson.teacher else f" — {room_text}"
+                lines.append(line)
         lines.append("")
 
     if not has_any:
