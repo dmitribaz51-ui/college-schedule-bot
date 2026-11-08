@@ -28,7 +28,10 @@ from app.parser.website_parser import (
     fetch_pdf_schedule_links,
     fetch_schedule_links,
 )
-from app.services.notification_service import notify_about_schedule_update
+from app.services.notification_service import (
+    notify_about_schedule_update,
+    notify_about_zao_week,
+)
 from app.utils import (
     course_from_group, detect_faculty, normalize_group, today_perm,
 )
@@ -417,6 +420,7 @@ async def _process_pdf_link(
     force_reprocess: bool = False,
     bot=None,
     notify_admins: bool = True,
+    notify_users: bool = True,
 ) -> None:
     """Недельный PDF заочки: скачать, разобрать, проверить и сохранить пары."""
     config = get_config()
@@ -622,8 +626,31 @@ async def _process_pdf_link(
         )
         return
 
+    week_start = (
+        link.schedule_date - timedelta(days=link.schedule_date.weekday())
+        if link.schedule_date is not None
+        else None
+    )
+    week_end = (
+        link.date_end or (week_start + timedelta(days=5))
+        if week_start is not None
+        else None
+    )
+
+    # «Появилось» или «изменения» определяется до замены пар: если за эту
+    # неделю у группы уже были занятия — это изменение, иначе публикация.
+    prior_groups: set[str] = set()
+    if bot is not None and notify_users and week_start and week_end:
+        for schedule in schedules:
+            if repo.count_group_week_lessons(
+                schedule.group, week_start, week_end, faculty=None
+            ):
+                prior_groups.add(schedule.group)
+
     saved_groups: list[str] = []
     changed_groups: list[str] = []
+    new_groups: list[str] = []
+    updated_groups: list[str] = []
     saved_lessons = 0
     for schedule in schedules:
         group_faculty = detect_faculty(schedule.group)
@@ -641,6 +668,10 @@ async def _process_pdf_link(
             saved_groups.append(schedule.group)
         if changed and schedule.group not in changed_groups:
             changed_groups.append(schedule.group)
+            if schedule.group in prior_groups:
+                updated_groups.append(schedule.group)
+            else:
+                new_groups.append(schedule.group)
         repo.upsert_groups(
             [(schedule.group, schedule.course)],
             faculty=group_faculty,
@@ -686,6 +717,26 @@ async def _process_pdf_link(
             changed_groups=changed_groups,
         )
     )
+
+    if bot is not None and notify_users and week_start and week_end:
+        if new_groups:
+            await notify_about_zao_week(
+                bot,
+                week_start=week_start,
+                week_end=week_end,
+                groups=new_groups,
+                title=link.title,
+                is_new=True,
+            )
+        if updated_groups:
+            await notify_about_zao_week(
+                bot,
+                week_start=week_start,
+                week_end=week_end,
+                groups=updated_groups,
+                title=link.title,
+                is_new=False,
+            )
 
 
 async def check_for_updates(
@@ -746,6 +797,7 @@ async def check_for_updates(
                     force_reprocess=force_reprocess,
                     bot=bot,
                     notify_admins=notify_admins,
+                    notify_users=notify_users,
                 )
             else:
                 await _process_link(
