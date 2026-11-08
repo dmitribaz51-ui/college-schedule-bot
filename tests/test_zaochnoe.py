@@ -131,6 +131,61 @@ def test_startup_resets_26_10_for_reocr_once(tmp_path):
         assert row.processed
 
 
+def test_startup_resets_2027_for_recheck_once(tmp_path):
+    """2027 перечитывается один раз, даже если старая строка без error."""
+    db_file = tmp_path / "bot.db"
+    url = f"sqlite:///{db_file.as_posix()}"
+    pdf_url = "https://example.test/zaochnoe/15.02.2027.pdf"
+    old_url = "https://example.test/zaochnoe/26.10.2026.pdf"
+    db.init_db(url)
+    with db.get_session() as session:
+        session.execute(
+            text("DELETE FROM app_meta WHERE key = 'zao_2027_recheck_2026_11'")
+        )
+        session.add(
+            ScheduleFile(
+                title="Расписание 15.02-20.02.2027",
+                schedule_date=date(2027, 2, 15),
+                file_type="schedule",
+                url=pdf_url,
+                faculty="zaochnoe",
+                processed=True,
+                error=None,
+            )
+        )
+        session.add(
+            ScheduleFile(
+                title="Расписание 26.10-31.10.2026",
+                schedule_date=date(2026, 10, 26),
+                file_type="schedule",
+                url=old_url,
+                faculty="zaochnoe",
+                processed=True,
+                error=None,
+            )
+        )
+
+    db.init_db(url)
+    with db.get_session() as session:
+        row_2027 = session.scalars(
+            select(ScheduleFile).where(ScheduleFile.url == pdf_url)
+        ).one()
+        row_2026 = session.scalars(
+            select(ScheduleFile).where(ScheduleFile.url == old_url)
+        ).one()
+        assert not row_2027.processed
+        assert row_2027.error is None
+        assert row_2026.processed
+        row_2027.processed = True
+
+    db.init_db(url)
+    with db.get_session() as session:
+        row_2027 = session.scalars(
+            select(ScheduleFile).where(ScheduleFile.url == pdf_url)
+        ).one()
+        assert row_2027.processed
+
+
 def test_pdf_links_parser():
     html = """
     <a href="/files/zaochnoe/09.11.pdf">

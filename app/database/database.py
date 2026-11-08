@@ -121,6 +121,32 @@ def init_db(database_url: str) -> None:
                 ),
                 {"key": "ocr_time_fix_2026_11", "value": "1"},
             )
+        # Один раз перечитываем все заочные PDF 2027 года. Они появились на
+        # сайте 02.11.2026, но могли остаться processed=True без пар: старая
+        # версия помечала скан обработанным даже при ошибке OCR. Общий сброс
+        # выше лечит только строки с error; этот — гарантирует повторный
+        # разбор и для строк без ошибки, но с пустым результатом.
+        applied_2027 = connection.execute(
+            text("SELECT value FROM app_meta WHERE key = :key"),
+            {"key": "zao_2027_recheck_2026_11"},
+        ).scalar()
+        if applied_2027 is None:
+            connection.execute(
+                text(
+                    "UPDATE schedule_files "
+                    "SET processed = 0, error = NULL, last_checked = NULL "
+                    "WHERE faculty = 'zaochnoe' "
+                    "AND schedule_date >= :day"
+                ),
+                {"day": "2027-01-01"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO app_meta (key, value) "
+                    "VALUES (:key, :value)"
+                ),
+                {"key": "zao_2027_recheck_2026_11", "value": "1"},
+            )
         broadcast_columns = {
             column["name"]
             for column in inspect(_engine).get_columns("broadcasts")
