@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select, update
 
 from .database import get_session
 from .models import Group, Lesson, ScheduleFile, User
@@ -163,9 +163,16 @@ def upsert_file(
     processed: bool = False,
     error: str | None = None,
     faculty: str = "permskaya",
+    review_required: bool | None = None,
+    retry_count: int | None = None,
     update_check_time: bool = False,
 ) -> int:
-    """Создаёт или обновляет запись о файле. Дубликаты по url невозможны."""
+    """Создаёт или обновляет запись о файле. Дубликаты по url невозможны.
+
+    ``review_required``/``retry_count`` со значением ``None`` сохраняют
+    текущее значение: обычное обновление статуса не должно случайно
+    снимать «нужна проверка» или сбрасывать счётчик попыток.
+    """
     with get_session() as s:
         record = s.scalar(select(ScheduleFile).where(ScheduleFile.url == url))
         if record is None:
@@ -177,8 +184,12 @@ def upsert_file(
         record.schedule_date = schedule_date
         if file_hash:
             if record.file_hash and record.file_hash != file_hash:
-                # Содержимое файла изменилось — сбрасываем кэшированный file_id Телеграма
+                # Содержимое файла изменилось — сбрасываем кэшированный file_id
+                # и все пометки предыдущей версии PDF.
                 record.telegram_file_id = None
+                record.review_required = False
+                record.retry_count = 0
+                record.alerted_hash = None
             record.file_hash = file_hash
         if local_path:
             record.local_path = local_path
@@ -187,8 +198,27 @@ def upsert_file(
             record.last_checked = datetime.now()
         record.processed = processed
         record.error = error
+        if review_required is not None:
+            record.review_required = review_required
+        if retry_count is not None:
+            record.retry_count = retry_count
         s.flush()
         return record.id
+
+
+def mark_file_alerted(url: str, file_hash: str) -> None:
+    """Запоминает версию PDF, по которой админам уже отправлена тревога."""
+    with get_session() as s:
+        record = s.scalar(select(ScheduleFile).where(ScheduleFile.url == url))
+        if record is not None:
+            record.alerted_hash = file_hash
+
+
+def clear_file_alert(url: str) -> None:
+    with get_session() as s:
+        record = s.scalar(select(ScheduleFile).where(ScheduleFile.url == url))
+        if record is not None:
+            record.alerted_hash = None
 
 
 def get_processed_urls() -> set[str]:
@@ -230,6 +260,67 @@ def get_recent_files(limit: int = 10, file_type: str | None = None) -> list[Sche
 def count_files() -> int:
     with get_session() as s:
         return s.scalar(select(func.count(ScheduleFile.id))) or 0
+
+
+def _zao_problem_condition():
+    """Заочные PDF, которые не удалось применить: ошибка/проверка/не обработан.
+
+    «Дубликат» — не проблема: такой PDF уже разобран под другим URL.
+    """
+    not_duplicate = or_(
+        ScheduleFile.error.is_(None),
+        ~ScheduleFile.error.like("Дубликат%"),
+    )
+    return and_(
+        ScheduleFile.faculty == "zaochnoe",
+        not_duplicate,
+        or_(
+            ScheduleFile.processed.is_(False),
+            ScheduleFile.review_required.is_(True),
+            and_(
+                ScheduleFile.error.is_not(None),
+                ~ScheduleFile.error.like("Дубликат%"),
+            ),
+        ),
+    )
+
+
+def get_zao_problem_files() -> list[ScheduleFile]:
+    """Все заочные файлы, требующие повторного разбора или проверки."""
+    with get_session() as s:
+        return list(
+            s.scalars(
+                select(ScheduleFile)
+                .where(_zao_problem_condition())
+                .order_by(ScheduleFile.schedule_date.desc(), ScheduleFile.id.desc())
+            )
+        )
+
+
+def count_zao_problem_files() -> int:
+    with get_session() as s:
+        return s.scalar(
+            select(func.count(ScheduleFile.id)).where(_zao_problem_condition())
+        ) or 0
+
+
+def reset_zao_problem_files() -> int:
+    """Сбрасывает только проблемные заочные PDF перед точечным перечитыванием."""
+    with get_session() as s:
+        result = s.execute(
+            update(ScheduleFile)
+            .where(_zao_problem_condition())
+            .values(
+                processed=False,
+                error=None,
+                review_required=False,
+                retry_count=0,
+                alerted_hash=None,
+                last_checked=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount or 0
 
 
 # ------------------------------------------------------------------- уроки
@@ -516,6 +607,42 @@ def has_schedule_for_date(schedule_date: date) -> bool:
 def count_lessons() -> int:
     with get_session() as s:
         return s.scalar(select(func.count(Lesson.id))) or 0
+
+
+def count_group_week_lessons(
+    group_name: str,
+    week_start: date,
+    week_end: date,
+    faculty: str | None = None,
+) -> int:
+    """Сколько пар группы уже сохранено за неделю (для проверки OCR)."""
+    with get_session() as s:
+        stmt = select(func.count(Lesson.id)).where(
+            Lesson.group_name == group_name,
+            Lesson.schedule_date >= week_start,
+            Lesson.schedule_date <= week_end,
+        )
+        if faculty:
+            stmt = stmt.where(Lesson.faculty == faculty)
+        return s.scalar(stmt) or 0
+
+
+def count_week_lessons(
+    groups: list[str],
+    week_start: date,
+    week_end: date,
+) -> int:
+    """Есть ли сохранённые пары за неделю (для текста админ-алерта)."""
+    with get_session() as s:
+        stmt = select(func.count(Lesson.id)).where(
+            Lesson.schedule_date >= week_start,
+            Lesson.schedule_date <= week_end,
+        )
+        if groups:
+            stmt = stmt.where(Lesson.group_name.in_(groups))
+        else:
+            stmt = stmt.where(Lesson.group_name.like("% зо"))
+        return s.scalar(stmt) or 0
 
 
 def available_dates(group_name: str, limit: int = 7, faculty: str = "permskaya") -> list[date]:

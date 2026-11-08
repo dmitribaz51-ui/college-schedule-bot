@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean, Date, DateTime, ForeignKey, Integer, String, Text,
-    UniqueConstraint, func,
+    UniqueConstraint, func, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -60,6 +60,17 @@ class ScheduleFile(Base):
     last_checked: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Заочный PDF разобран частично/подозрительно: автоматически применять
+    # такой результат нельзя, пока админ не перечитает файл.
+    review_required: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("0")
+    )
+    # Сколько раз подряд не удалось разобрать PDF (для паузы 1 ч → 3 ч).
+    retry_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
+    # Хеш версии PDF, по которой админам уже отправляли тревогу.
+    alerted_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     faculty: Mapped[str] = mapped_column(String(32), default="permskaya")
     telegram_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

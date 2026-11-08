@@ -124,9 +124,33 @@ async def admin_check(callback: CallbackQuery, bot: Bot) -> None:
         return
     await callback.answer("Проверяю сайт…")
     report = await check_for_updates(
-        bot=bot, force_reprocess=True, notify_users=False
+        bot=bot,
+        force_reprocess=True,
+        notify_users=False,
+        notify_admins=False,
     )
     await callback.message.answer(f"🔄 <b>Результат проверки</b>\n\n{report.summary()}")
+
+
+def _file_line(item) -> list[str]:
+    day = item.schedule_date.strftime("%d.%m.%Y") if item.schedule_date else "?"
+    if item.review_required:
+        status = "⚠️"
+    elif item.processed:
+        status = "✅"
+    else:
+        status = "❌"
+    title = escape(item.title)
+    url = escape(item.url, quote=True)
+    lines = [
+        f'{status} [{item.file_type}] {day} — '
+        f'<a href="{url}">{title}</a>'
+    ]
+    if item.review_required:
+        lines.append(f"    🔎 Нужна проверка: {escape(item.error or 'причина не указана')}")
+    elif item.error:
+        lines.append(f"    ⚠️ {escape(item.error)}")
+    return lines
 
 
 @router.callback_query(F.data == "admin:files")
@@ -142,13 +166,83 @@ async def admin_files(callback: CallbackQuery) -> None:
 
     lines = ["🗂 <b>Последние файлы</b>", ""]
     for item in files:
-        day = item.schedule_date.strftime("%d.%m.%Y") if item.schedule_date else "?"
-        status = "✅" if item.processed else "❌"
-        lines.append(f"{status} [{item.file_type}] {day} — {item.title}")
-        if item.error:
-            lines.append(f"    ⚠️ {item.error}")
-    await callback.message.answer("\n".join(lines))
+        lines.extend(_file_line(item))
+    await callback.message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin:zao_problems")
+async def admin_zao_problems(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    files = repo.get_zao_problem_files()
+    if not files:
+        await callback.message.answer("✅ Проблемных PDF заочки нет.")
+        await callback.answer()
+        return
+
+    lines = [f"⚠️ <b>Проблемные PDF заочки: {len(files)}</b>", ""]
+    for item in files[:20]:
+        lines.extend(_file_line(item))
+        lines.append("")
+    if len(files) > 20:
+        lines.append(f"… и ещё {len(files) - 20}")
+    await callback.message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:retry_zao")
+async def admin_retry_zao(callback: CallbackQuery, bot: Bot) -> None:
+    """Перечитывает только проблемные заочные PDF, не трогая очные Excel."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    message = _require_message(callback)
+    if message is None:
+        await callback.answer("Откройте /admin заново", show_alert=True)
+        return
+
+    await callback.answer("Перечитываю проблемные PDF…")
+    problem_urls = {item.url for item in repo.get_zao_problem_files()}
+    if not problem_urls:
+        await message.answer("✅ Проблемных PDF заочки нет — перечитывать нечего.")
+        return
+    reset_count = repo.reset_zao_problem_files()
+
+    report = await check_for_updates(
+        bot=bot,
+        zao_only=True,
+        only_urls=problem_urls,
+        notify_users=False,
+        notify_admins=False,
+    )
+    remaining = repo.count_zao_problem_files()
+    lines = [
+        "🔁 <b>Перечитывание PDF заочки</b>",
+        "",
+        f"Сброшено проблемных файлов: {reset_count}",
+        f"Ссылок на странице заочки: {report.links_found}",
+        f"✅ Успешно разобрано: {len(report.new_files)}",
+        f"⚠️ Осталось проблемных: {remaining}",
+    ]
+    if report.errors:
+        lines.append("")
+        lines.append("Ошибки:")
+        lines.extend(f"• {escape(error)}" for error in report.errors[:5])
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
 
 
 @router.callback_query(F.data == "admin:groups")

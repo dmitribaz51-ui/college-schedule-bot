@@ -64,6 +64,27 @@ def init_db(database_url: str) -> None:
                     "ADD COLUMN telegram_file_id VARCHAR(255)"
                 )
             )
+        if "review_required" not in schedule_file_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE schedule_files "
+                    "ADD COLUMN review_required BOOLEAN DEFAULT 0"
+                )
+            )
+        if "retry_count" not in schedule_file_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE schedule_files "
+                    "ADD COLUMN retry_count INTEGER DEFAULT 0"
+                )
+            )
+        if "alerted_hash" not in schedule_file_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE schedule_files "
+                    "ADD COLUMN alerted_hash VARCHAR(64)"
+                )
+            )
         # OCR до исправления словаря подставлял «горно» вместо «торгово»
         # в предмете «Автоматизация ... процессов». Правим только заочные
         # группы ТД, чтобы не затронуть очное отделение.
@@ -81,11 +102,11 @@ def init_db(database_url: str) -> None:
         # Заочные PDF, которые упали до включения OCR или после смены парсера,
         # не должны навсегда оставаться «обработанными». Сбрасываем им статус
         # и время проверки: первый же цикл перечитает файл. Повторные неудачи
-        # ограничены PDF_RETRY_AFTER в update_service.
+        # ограничены интервалами 1 ч / 3 ч в update_service.
         connection.execute(
             text(
                 "UPDATE schedule_files "
-                "SET processed = 0, last_checked = NULL "
+                "SET processed = 0, last_checked = NULL, retry_count = 0 "
                 "WHERE faculty = 'zaochnoe' "
                 "AND error IS NOT NULL "
                 "AND error NOT LIKE 'Дубликат%'"
